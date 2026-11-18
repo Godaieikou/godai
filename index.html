@@ -1356,6 +1356,19 @@ class MainScene extends Phaser.Scene {
             this.setupConnectionHandlers();
         });
 
+        // 接続診断（2026-11-19）: データチャネルが開かない問題の切り分け用。
+        // これまで PeerJS の失敗は画面にもログにも残らず、理由が追えなかった。
+        // engine.log はゲーム内ログ表示と console の両方へ出るので、失敗時にそのまま残る。
+        this.peer.on('error', (err) => {
+            const type = (err && err.type) ? err.type : 'unknown';
+            const message = (err && err.message) ? err.message : String(err);
+            this.engine.log(`⚠️ Peerエラー: ${type} - ${message}`);
+        });
+
+        this.peer.on('disconnected', () => {
+            this.engine.log(`⚠️ Peer切断: シグナリングから切断されました`);
+        });
+
         // スマホ対応 第2弾（2026-11-18）: P2Pパネルが盤面にかぶる問題への対処。
         // 小画面では既定で折りたたみ、ヘッダーのボタンで開閉する（表示層のみの変更）
         const netControls = document.getElementById('net-controls');
@@ -1463,6 +1476,64 @@ class MainScene extends Phaser.Scene {
 
         this.conn.on('data', (data) => {
             this.handleNetworkData(data);
+        });
+
+        // 接続診断（2026-11-19）: 接続単位の失敗・終了もログに残す（理由は setupPeerJS 側と同旨）
+        this.conn.on('error', (err) => {
+            const type = (err && err.type) ? err.type : 'unknown';
+            const message = (err && err.message) ? err.message : String(err);
+            this.engine.log(`⚠️ 接続エラー: ${type} - ${message}`);
+        });
+
+        this.conn.on('close', () => {
+            this.engine.log(`🔌 接続が閉じました`);
+        });
+
+        this.setupIceDiagnostics();
+    }
+
+    // 接続診断（2026-11-19）: WebRTC の ICE 状態遷移と候補内訳をログに残す。
+    // relay 候補が出るかどうかが、TURN（中継）が実際に使えるかの判定の鍵になる。
+    // relay が 0 のままなら、TURN の認証情報が無効で中継できていない可能性が高い。
+    // 候補文字列そのもの（IP等）は出さず、種類別の件数だけを1行に集計する。
+    // Node スタブ環境など peerConnection が無い場合は何もしない（例外にしない）。
+    // PeerJS 自身の候補処理と競合しないよう、on* への代入ではなく addEventListener で付ける。
+    setupIceDiagnostics() {
+        const conn = this.conn;
+        if (!conn || conn.__iceDiagAttached) return;
+        const pc = conn.peerConnection;
+        if (!pc || typeof pc.addEventListener !== 'function') return;
+        conn.__iceDiagAttached = true;
+
+        const tally = { host: 0, srflx: 0, relay: 0, prflx: 0 };
+        let tallyReported = false;
+        const reportTally = () => {
+            if (tallyReported) return;
+            tallyReported = true;
+            this.engine.log(`🔍 ICE候補: host ${tally.host} / srflx ${tally.srflx} / relay ${tally.relay} / prflx ${tally.prflx}`);
+        };
+
+        pc.addEventListener('icecandidate', (event) => {
+            const cand = event ? event.candidate : null;
+            if (!cand) { reportTally(); return; }
+            let type = cand.type || null;
+            if (!type && cand.candidate) {
+                const m = String(cand.candidate).match(/ typ ([a-z]+)/);
+                if (m) type = m[1];
+            }
+            if (type && Object.prototype.hasOwnProperty.call(tally, type)) tally[type]++;
+        });
+
+        pc.addEventListener('iceconnectionstatechange', () => {
+            this.engine.log(`🔍 ICE状態: ${pc.iceConnectionState}`);
+            if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
+                reportTally();
+            }
+        });
+
+        pc.addEventListener('icegatheringstatechange', () => {
+            this.engine.log(`🔍 ICE収集: ${pc.iceGatheringState}`);
+            if (pc.iceGatheringState === 'complete') reportTally();
         });
     }
 
