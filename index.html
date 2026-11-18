@@ -1,0 +1,2506 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>五枚大富豪（ゴダイ） - 自爆＆空場ドボン完全防止版</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            background-color: #0d230a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            user-select: none;
+            overflow: hidden;
+            touch-action: none;
+        }
+        /* スマホ対応（2026-11-17）: 親要素に明示サイズを与え、Phaser Scale.FIT の
+           基準を確定させる。通常のデスクトップ（900×650以上）では従来と同一寸法。 */
+        #game-container {
+            width: min(900px, 100vw);
+            height: min(650px, 100vh);
+        }
+        #game-container canvas {
+            touch-action: none;
+        }
+        #log-container {
+            width: 270px;
+            height: 480px;
+            overflow-y: auto;
+            font-size: 11px;
+            color: #e0e0e0;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid #4caf50;
+            padding: 8px;
+            box-sizing: border-box;
+            border-radius: 6px;
+        }
+        #log-container::-webkit-scrollbar { width: 6px; }
+        #log-container::-webkit-scrollbar-thumb { background: #4caf50; border-radius: 3px; }
+
+        /* スマホ対応（2026-11-17）: 小画面ではログ欄を縮小し、盤面の主領域を圧迫しない。
+           ログ欄はステージ内（x=740中心）の Phaser DOM 要素のため、CSSで移設はできない。
+           そのため寸法とフォントの縮小で対応する（デスクトップ表示は不変）。 */
+        @media (max-width: 820px) {
+            #log-container {
+                width: 210px;
+                height: 400px;
+                font-size: 10px;
+            }
+        }
+
+        #net-controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+            background: rgba(0,0,0,0.85);
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid #4caf50;
+            font-size: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            max-width: 350px;
+        }
+        #net-controls input[type="text"], #net-controls input[type="number"] {
+            width: 50px;
+            padding: 2px 4px;
+            background: #222;
+            color: #fff;
+            border: 1px solid #666;
+            border-radius: 4px;
+        }
+        #net-controls button {
+            padding: 4px 8px;
+            margin-left: 2px;
+            background: #4caf50;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #net-controls button:hover { background: #66bb6a; }
+        .btn-sub { background: #2196f3 !important; }
+        .btn-debug { background: #ff9800 !important; }
+
+        .rule-options {
+            margin-top: 8px;
+            border-top: 1px solid #555;
+            padding-top: 6px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+            font-size: 11px;
+        }
+        .rule-options label {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+        }
+
+        #rule-modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 560px;
+            max-height: 80vh;
+            background: rgba(15, 25, 15, 0.95);
+            border: 2px solid #ffeb3b;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            z-index: 1000;
+            overflow-y: auto;
+            color: #f0f0f0;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        #rule-modal h2 { margin-top: 0; color: #ffeb3b; border-bottom: 1px solid #666; padding-bottom: 8px; font-size: 18px; }
+        #rule-modal h3 { color: #81c784; margin-bottom: 4px; font-size: 14px; }
+        #rule-modal ul { padding-left: 20px; margin-top: 4px; }
+        #rule-modal .close-btn {
+            position: absolute;
+            top: 12px;
+            right: 15px;
+            background: #e53935;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+<div id="net-controls">
+    <div><strong>🌐 P2P通信対戦設定</strong></div>
+    <div style="margin-top: 6px;">
+        ID: <span id="my-peer-id" style="color: #ffeb3b; font-family: monospace;">発行中...</span>
+        <button id="btn-copy-id" class="btn-sub">📋 IDコピー</button>
+    </div>
+    <div style="margin-top: 8px;">
+        <input type="text" id="join-peer-id" placeholder="ID" style="width:110px;">
+        <button id="btn-paste">📋 貼付</button>
+        <button id="btn-connect">部屋に入る</button>
+    </div>
+
+    <div class="rule-options">
+        <label><input type="checkbox" id="chk-shibari"> 🔒 スート縛り</label>
+        <label><input type="checkbox" id="chk-eight" checked> ✂️ 8切り</label>
+        <label><input type="checkbox" id="chk-eleven" checked> 🔄 11バック</label>
+        <label><input type="checkbox" id="chk-rev" checked> 🔥 革命</label>
+        <label><input type="checkbox" id="chk-dia3" checked> ♦️ 3Special</label>
+        <label><input type="checkbox" id="chk-penalty" checked> ⚠️ ペナルティ上がり</label>
+        <label><input type="checkbox" id="chk-four"> 🛡️ 4止め</label>
+        <label><input type="checkbox" id="chk-qbomb"> 💣 Qボンバー</label>
+        <label><input type="checkbox" id="chk-five"> ⏭️ 5スキップ</label>
+        <label><input type="checkbox" id="chk-nine"> ↩️ 9リバース</label>
+        <label><input type="checkbox" id="chk-draw-dobon"> 🎲 引きドボン</label>
+        <label><input type="checkbox" id="chk-seven-pass"> 🎁 7渡し</label>
+        <label><input type="checkbox" id="chk-ten-discard"> 🗑️ 10捨て</label>
+    </div>
+
+    <div style="margin-top: 8px; border-top: 1px solid #555; padding-top: 6px; font-size: 11px;">
+        <label><input type="checkbox" id="chk-win-limit"> 🏆 回数あがり終了</label>
+        <input type="number" id="num-win-target" value="5" min="1" max="20"> 回
+    </div>
+
+    <div style="margin-top: 8px; border-top: 1px solid #555; padding-top: 6px; text-align: right;">
+        <label style="font-size: 12px;">人数:
+            <select id="sel-player-count">
+                <option value="2" selected>2人（CPU 1人）</option>
+                <option value="3">3人（CPU 2人）</option>
+                <option value="4">4人（CPU 3人）</option>
+            </select>
+        </label>
+        <button id="btn-single-play" class="btn-debug">🤖 1人テスト開始</button>
+    </div>
+</div>
+
+<div id="rule-modal">
+    <button class="close-btn" id="btn-close-rule">×</button>
+    <h2>📖 五枚大富豪（ゴダイ）公式ルール</h2>
+    <h3>💥 ドボンルール（基本ルール）</h3>
+    <ul>
+        <li>他人がカードを出した時、自分の手札合計（または1枚）と場の数字が一致すると<strong>「ドボン」</strong>を宣言できます。</li>
+        <li><strong>引きドボン</strong>: 山札から1枚カードを引いた直後、その手札合計が場の合計と一致した場合に即ドボン発動！</li>
+        <li>ドボンされた人は<strong>即座に脱落</strong>！順位は先に脱落した人ほど上で、1人目脱落＝2位確定、2人目＝3位、3人目＝4位。最後まで生き残ったプレイヤーが1位となります。</li>
+    </ul>
+</div>
+
+<div id="game-container"></div>
+
+<script>
+const RULE_FLAGS = {
+    USE_WIN_LIMIT: false,
+    TARGET_SCORE: 5,
+    ENABLE_SHIBARI: false,
+    EIGHT_GIRI: true,
+    ELEVEN_BACK: true,
+    REVOLUTION: true,
+    DIA3_SPECIAL: true,
+    SPECIAL_FINISH_PENALTY: true,
+    FOUR_STOP: false,
+    Q_BOMBER: false,
+    FIVE_SKIP: false,
+    NINE_REVERSE: false,
+    DRAW_DOBON: false,
+    SEVEN_PASS: false,
+    TEN_DISCARD: false
+    // 項目2（O-05）：手番タイマーは廃止。TURN_TIME_LIMIT は削除した
+};
+
+class GodaiEngine {
+    constructor(logger) {
+        this.logger = logger;
+        this.deck = [];
+        this.discardPile = [];
+        this.players = [];
+        this.fieldCards = [];
+        this.fieldPlayInfo = null;
+        this.fieldValue = 0;
+        this.fieldCardCount = 0;
+        this.currentTurnIndex = 0;
+        this.lastPlayPlayerIndex = -1;
+        this.turnDirection = 1;
+        
+        this.isRevolution = false;
+        this.is11Back = false;
+        this.shibariSuit = null;
+        this.passedPlayers = new Set();
+        this.eliminatedRankCount = 0;
+        this.gameState = 'START_CHOICE';
+        this.dobonPhase = null;
+        this.lastDobonResult = null;
+
+        this.initGame();
+    }
+
+    log(msg) {
+        if (this.logger) this.logger(msg);
+        console.log(`[GodaiEngine] ${msg}`);
+    }
+
+    // playerCount：既定は2人戦（ホスト対ゲスト。C-01／マイルストーン③-2）。
+    // 1人テスト（CPU戦）は画面側の人数セレクト（2〜4人）で選んだ人数を渡す
+    initGame(playerCount = 2) {
+        const suits = ['♠', '♥', '♦', '♣'];
+        this.deck = [];
+        this.discardPile = [];
+        for (let suit of suits) {
+            for (let num = 1; num <= 13; num++) {
+                this.deck.push({ suit: suit, num: num, isJoker: false, id: Math.random().toString(36).substr(2, 9) });
+            }
+        }
+        this.deck.push({ suit: 'JK', num: 0, isJoker: true, id: Math.random().toString(36).substr(2, 9) });
+        this.deck.push({ suit: 'JK', num: 0, isJoker: true, id: Math.random().toString(36).substr(2, 9) });
+        Phaser.Utils.Array.Shuffle(this.deck);
+
+        const playerNames = ['ホスト (P1)', 'ゲスト (P2)', 'CPU 1', 'CPU 2'];
+        const count = Math.max(2, Math.min(4, playerCount));
+        this.players = [];
+        for (let i = 0; i < count; i++) {
+            this.players.push({ id: i, name: playerNames[i], hand: [], isCpu: i !== 0, score: 0, isEliminated: false, rank: null, startCard: null });
+        }
+
+        this.players.forEach(p => {
+            p.hand = this.deck.splice(0, 5);
+            this.sortHandByStrength(p);
+        });
+
+        this.fieldCards = [];
+        this.fieldPlayInfo = null;
+        this.fieldValue = 0;
+        this.fieldCardCount = 0;
+        this.turnDirection = 1;
+        this.passedPlayers.clear();
+        this.eliminatedRankCount = 0;
+        this.isRevolution = false;
+        this.is11Back = false;
+        this.shibariSuit = null;
+        this.spade3Lock = false;
+        this.dobonPhase = null;
+        this.lastDobonResult = null;
+        this.gameState = 'START_CHOICE';
+        this.log('--- ゲームが初期化されました ---');
+    }
+
+    sortHandByStrength(player) {
+        player.hand.sort((a, b) => this.getCardStrength(a) - this.getCardStrength(b));
+    }
+
+    isReverse() {
+        return (this.isRevolution !== this.is11Back);
+    }
+
+    getCardStrength(card, isSinglePlay = true) {
+        if (card.isJoker) return 99;
+        if (isSinglePlay && RULE_FLAGS.DIA3_SPECIAL && card.suit === '♦' && card.num === 3) {
+            // ♦3 の特別な強さは単体で出すときだけ（S-04）。通常時＝最強、逆転時＝最弱（S-01〜S-03）
+            return this.isReverse() ? 0 : 100;
+        }
+
+        let num = card.num;
+        let val = num === 1 ? 14 : (num === 2 ? 15 : num);
+
+        if (this.isReverse()) {
+            val = 18 - val;
+        }
+        return val;
+    }
+
+    selectStartCard(playerIndex, cardIndex) {
+        this.players[playerIndex].startCard = this.players[playerIndex].hand[cardIndex];
+    }
+
+    finalizeStartChoice() {
+        for (let i = 0; i < this.players.length; i++) {
+            if (!this.players[i].startCard && this.players[i].hand.length > 0) {
+                this.players[i].startCard = this.players[i].hand[0];
+            }
+        }
+
+        // 親決め専用の強さ判定（V-04、本人の裁定2026-11-15）：基本は通常の強さ順（S-01）で、最も弱い札を出した人が親になる。
+        // ♦3は最強として扱い、出した人は親にはならない。
+        // JKは♠3と♦3の両方に負ける：どちらかが出ているときはJKが最も弱い扱いになり、JKを出した人が親になる。
+        // それ以外の札に対してJKは最強として扱い、親にはならない。
+        // 数字が同じ場合はスートの強さ（♠＞♥＞♣＞♦）で比べ、より弱いスートを選んだ人が親になる
+        const suitRank = { '♠': 3, '♥': 2, '♣': 1, '♦': 0 };
+        const hasSpade3OrDia3 = this.players.some(p => p.startCard && !p.startCard.isJoker && p.startCard.num === 3 && (p.startCard.suit === '♠' || p.startCard.suit === '♦'));
+        const startStrength = (card) => {
+            if (card.isJoker) return hasSpade3OrDia3 ? -1 : 99;
+            if (card.suit === '♦' && card.num === 3) return 99;
+            return this.getCardStrength(card);
+        };
+
+        let weakestPlayer = 0;
+        let minStrength = 999;
+        let minSuitRank = 999;
+
+        this.players.forEach((p, idx) => {
+            if (p.startCard) {
+                const str = startStrength(p.startCard);
+                const sRank = p.startCard.isJoker ? -1 : suitRank[p.startCard.suit];
+                const label = p.startCard.isJoker ? 'JOKER' : `${p.startCard.suit}${p.startCard.num}`;
+                this.log(`${p.name} が見せたカード: [${label}]`);
+                if (str < minStrength || (str === minStrength && sRank < minSuitRank)) {
+                    minStrength = str;
+                    minSuitRank = sRank;
+                    weakestPlayer = idx;
+                }
+            }
+        });
+
+        // 最弱で並んだ札の中にJKが含まれる場合は決着がつかないので、親を決めず選び直しにする（V-04）。
+        // ここに含まれるのはJK同士の場合（JK対♦3はJKが親になるため、ここには来ない。本人の裁定2026-11-15）
+        const weakestTied = this.players.filter(p => p.startCard && startStrength(p.startCard) === minStrength);
+        if (weakestTied.length >= 2 && weakestTied.some(p => p.startCard.isJoker)) {
+            this.log(`決着がつきませんでした。カードを選び直してください`);
+            // 選び直しでは全員の選択をクリアする。クリアしないと、オンラインでは相手の再選択が
+            // ホスト側で「選択済み」として弾かれ、選び直し自体が成立しない（順序依存バグと同型）
+            this.players.forEach(p => { p.startCard = null; });
+            return -1;
+        }
+
+        const startP = this.players[weakestPlayer];
+        this.log(`最弱カードを出した 【${startP.name}】 が親に決定！`);
+
+        this.fieldCards = [];
+        this.fieldPlayInfo = null;
+        this.fieldValue = 0;
+        this.fieldCardCount = 0;
+        this.lastPlayPlayerIndex = weakestPlayer;
+        this.currentTurnIndex = weakestPlayer;
+
+        this.gameState = 'PLAYING';
+        return weakestPlayer;
+    }
+
+    static getCardPoint(card) {
+        return card.isJoker ? 0 : card.num;
+    }
+
+    static getHandTotal(hand) {
+        return hand.reduce((sum, c) => sum + GodaiEngine.getCardPoint(c), 0);
+    }
+
+    // 出し札の型を判定する（G-06/G-07/T-01〜T-11）
+    // 戻り値： { type: 'same' | 'sequence', headNum, headCard, assignedNums } 。その型として読めなければ null
+    // assignedNums は「そのカードが確定した数字」を、カードオブジェクトをキーにして引ける Map（JKの固定先）
+
+    // 「同じ数字」として読む。JKは実カードの数字に固定される（G-04/G-05）
+    analyzeAsSame(cards) {
+        if (!cards || cards.length === 0) return null;
+        const reals = cards.filter(c => !c.isJoker);
+        if (reals.length === 0) {
+            // JKだけの組み合わせ：固定先は通常時＝2、逆転時＝3（G-07）
+            const n = this.isReverse() ? 3 : 2;
+            return { type: 'same', headNum: n, headCard: { suit: '♠', num: n, isJoker: false }, assignedNums: new Map(cards.map(c => [c, n])) };
+        }
+        const baseNum = reals[0].num;
+        if (!reals.every(c => c.num === baseNum)) return null;
+        return { type: 'same', headNum: baseNum, headCard: reals[0], assignedNums: new Map(cards.map(c => [c, baseNum])) };
+    }
+
+    // 「階段」として読む：3枚以上・同じスート・連続した数字（G-06）。JKは不足分を埋める
+    analyzeAsSequence(cards) {
+        if (!cards || cards.length < 3) return null;
+        const jokers = cards.filter(c => c.isJoker);
+        const reals = cards.filter(c => !c.isJoker);
+        // JKだけの組み合わせも階段として読める（Q2=B）。その場合は候補の中で最も強い階段が選ばれる
+        if (reals.length > 0 && new Set(reals.map(c => c.suit)).size !== 1) return null;
+        const toIdx = (num) => num === 1 ? 11 : (num === 2 ? 12 : num - 3); // 並び順：3→0, 4→1, …, K→10, A→11, 2→12
+        const fromIdx = (idx) => idx === 11 ? 1 : (idx === 12 ? 2 : idx + 3);
+        const positions = reals.map(c => toIdx(c.num));
+        if (new Set(positions).size !== positions.length) return null;
+
+        const len = cards.length;
+        let best = null;
+        for (let start = 0; start + len - 1 <= 12; start++) {
+            const end = start + len - 1;
+            if (!positions.every(p => p >= start && p <= end)) continue;
+            // 階段の先頭（比べる数字）は通常時＝大きい端、逆転時＝小さい端。候補はその強さで比べる（T-10）
+            const headIdx = this.isReverse() ? start : end;
+            const headCard = { suit: '♠', num: fromIdx(headIdx), isJoker: false };
+            const strength = this.getCardStrength(headCard);
+            if (!best || strength > best.strength) {
+                const assignedNums = new Map();
+                reals.forEach(c => assignedNums.set(c, c.num));
+                const missing = [];
+                for (let i = start; i <= end; i++) {
+                    if (!positions.includes(i)) missing.push(fromIdx(i));
+                }
+                jokers.forEach((jk, k) => assignedNums.set(jk, missing[k]));
+                best = { type: 'sequence', headNum: fromIdx(headIdx), headCard, assignedNums, strength };
+            }
+        }
+        if (!best) return null;
+        return { type: best.type, headNum: best.headNum, headCard: best.headCard, assignedNums: best.assignedNums };
+    }
+
+    // 場面を問わない判定（同じ数字を優先。場が空のリード判定などに使う）
+    // declaredType（'same' | 'sequence'）が指定されたら、その型としてだけ読む（リード時の型宣言、G-06。本人の裁定2026-11-15：Q1=A・Q2=B・Q3=B）
+    analyzePlay(cards, declaredType = null) {
+        if (declaredType === 'same') return this.analyzeAsSame(cards);
+        if (declaredType === 'sequence') return this.analyzeAsSequence(cards);
+        return this.analyzeAsSame(cards) || this.analyzeAsSequence(cards);
+    }
+
+    // 場に札があるときは、場の種類（同じ数字／階段）で解釈が決まる（G-07）
+    // 場の型は「出した時点」で確定させた保持値（fieldPlayInfo）を優先し、無い場合だけ場の札から判定する
+    analyzePlayInContext(cards, declaredType = null) {
+        if (this.fieldCards.length > 0) {
+            const fieldInfo = this.fieldPlayInfo || this.analyzePlay(this.fieldCards);
+            if (fieldInfo) {
+                return fieldInfo.type === 'sequence' ? this.analyzeAsSequence(cards) : this.analyzeAsSame(cards);
+            }
+        }
+        return this.analyzePlay(cards, declaredType);
+    }
+
+// ===== ドボン判定フェーズ（項目6・7・11・17。設計案「Godaiドボン判定フェーズ設計案」2026-11-15） =====
+// 札を出してから手番が確定するまでの区間を、エンジン側の明示的な状態（dobonPhase）として持つ。
+// あがり・8切りはフェーズ解決後の後処理（S4）でのみ確定し、脱落は鎖の解決時にだけ確定する。
+
+// 宣言できるか（B-02/B-07/O-03）：場があり、直前の出し手ではなく、手札合計＝場の数字で手札が0枚でないこと
+canDeclareDobon(playerIndex) {
+if (this.gameState === 'GAME_OVER') return false;
+const p = this.players[playerIndex];
+if (!p || p.isEliminated || p.hand.length === 0) return false;
+if (this.fieldCards.length === 0) return false;
+if (this.lastPlayPlayerIndex === playerIndex) return false;
+if (this.dobonPhase && this.dobonPhase.declaredPlayers.has(playerIndex)) return false;
+return GodaiEngine.getHandTotal(p.hand) === this.fieldValue;
+}
+
+// 返せるか（B-04/B-07/W-07）：フェーズで今まさに宣言の対象になっている人が、宣言者に返せるか
+canReturnDobon(playerIndex) {
+const phase = this.dobonPhase;
+if (!phase || phase.askKind!== 'RETURN' || phase.askedPlayer!== playerIndex) return false;
+const p = this.players[playerIndex];
+if (!p || p.isEliminated || p.hand.length === 0) return false;
+if (phase.declaredPlayers.has(playerIndex)) return false;
+return GodaiEngine.getHandTotal(p.hand) === this.fieldValue;
+}
+
+// フェーズ内部用：宣言・返しの資格（合計一致、手札あり、未宣言、脱落していない）
+_dobonEligible(playerIndex, phase) {
+const p = this.players[playerIndex];
+if (!p || p.isEliminated || p.hand.length === 0) return false;
+if (phase && phase.declaredPlayers.has(playerIndex)) return false;
+return GodaiEngine.getHandTotal(p.hand) === this.fieldValue;
+}
+
+// 現在フェーズが誰に何を聞いているか（聞いていなければ null）。画面・CPU・テストはこれと answerDobon だけを使う
+getDobonQuestion() {
+if (!this.dobonPhase || this.dobonPhase.askedPlayer === null || this.dobonPhase.askedPlayer === undefined) return null;
+return { playerIndex: this.dobonPhase.askedPlayer, kind: this.dobonPhase.askKind, phaseKind: this.dobonPhase.kind};
+}
+
+// 宣言候補：fromIndex からターンの回り順に、鎖の末尾ではなく資格のある生存者を並べる
+_dobonCandidatesFrom(fromIndex, phase) {
+const n = this.players.length;
+const tail = phase.chain[phase.chain.length - 1];
+const list = [];
+for (let step = 1; step < n; step++) {
+const idx = (((fromIndex + this.turnDirection * step) % n) + n) % n;
+if (idx === tail) continue;
+if (this._dobonEligible(idx, phase)) list.push(idx);
+}
+return list;
+}
+
+_nextActiveIndex(fromIndex) {
+const n = this.players.length;
+for (let step = 1; step <= n; step++) {
+const idx = (((fromIndex + this.turnDirection * step) % n) + n) % n;
+if (!this.players[idx].isEliminated) return idx;
+}
+return fromIndex;
+}
+
+// 札を出したあとのドボン判定フェーズを開始する（S2）。該当者がいなくても必ずこの状態を経由する（O-06）
+startDobonPhase(playPlayerIndex, opts = {}) {
+const phase = {
+kind: 'PLAY',
+context: null,
+headIndex: playPlayerIndex,
+chain: [playPlayerIndex],
+declaredPlayers: new Set(),
+askedPlayer: null,
+askKind: null,
+declareQueue: [],
+pendingWin:!!opts.pendingWin,
+pendingEightGiri:!!opts.pendingEightGiri,
+playedCards: opts.playedCards || [],
+playPlayerIndex: playPlayerIndex,
+drawerIndex: -1
+};
+this.dobonPhase = phase;
+phase.declareQueue = this._dobonCandidatesFrom(playPlayerIndex, phase);
+this._advanceDobonPhase();
+return phase;
+}
+
+// 宣言候補が残っていれば次の人に聞き、尽きたら鎖を解決する
+_advanceDobonPhase() {
+const phase = this.dobonPhase;
+if (!phase) return;
+if (phase.declareQueue.length > 0) {
+phase.askedPlayer = phase.declareQueue[0];
+phase.askKind = 'DECLARE';
+return;
+}
+// これ以上宣言は起きない。鎖が伸びていれば「最後の宣言の相手」が脱落（B-06）
+const dropout = phase.chain.length >= 2? phase.chain[phase.chain.length - 2]: -1;
+this._resolveDobonPhase(dropout);
+}
+
+// フェーズへの回答（宣言する／しない、返す／返さない）
+answerDobon(playerIndex, yes) {
+const phase = this.dobonPhase;
+if (!phase || phase.askedPlayer!== playerIndex) return null;
+const kind = phase.askKind;
+phase.askedPlayer = null;
+phase.askKind = null;
+
+if (kind === 'DECLARE') {
+phase.declareQueue.shift();
+if (!yes) {
+this.log(`${this.players[playerIndex].name} はドボンしませんでした`);
+if (phase.kind === 'DRAW') {
+// 引きドボンを見送ったら、元の流れ（場流れ・親の確定）に戻る
+return this._resolveDobonPhase(-1);
+}
+this._advanceDobonPhase();
+return this.lastDobonResult;
+}
+// 宣言成立：鎖に積み、対象（直前の末尾）に返しを聞く
+this.log(`💥 ${this.players[playerIndex].name} がドボンを宣言！`);
+phase.declaredPlayers.add(playerIndex);
+const target = phase.chain[phase.chain.length - 1];
+phase.chain.push(playerIndex);
+if (this._dobonEligible(target, phase)) {
+phase.askedPlayer = target;
+phase.askKind = 'RETURN';
+} else {
+// 対象は返せない（合計不一致・手札0枚など）→ そのまま解決し、対象が脱落
+this._resolveDobonPhase(target);
+}
+return this.lastDobonResult;
+}
+
+if (kind === 'RETURN') {
+if (!yes) {
+this.log(`${this.players[playerIndex].name} は返しませんでした`);
+// 返さない：宣言の対象（聞かれている人）が脱落
+this._resolveDobonPhase(playerIndex);
+return this.lastDobonResult;
+}
+// 返し成立：対象を鎖に積む
+this.log(`↩️ ${this.players[playerIndex].name} がドボンを返しました！`);
+phase.declaredPlayers.add(playerIndex);
+const declarer = phase.chain[phase.chain.length - 1];
+phase.chain.push(playerIndex);
+if (phase.kind === 'DRAW') {
+// 引きドボンの鎖は［元のP, 引いた人, 元のP］で確定し、引いた人が脱落（D-02）
+this._resolveDobonPhase(declarer);
+return this.lastDobonResult;
+}
+// 通常の鎖：宣言者を起点に座席順で、次の宣言候補を聞く（3人以上の一般形。2人戦では候補は残らない）
+phase.declareQueue = this._dobonCandidatesFrom(declarer, phase);
+this._advanceDobonPhase();
+return this.lastDobonResult;
+}
+
+return null;
+}
+
+// 鎖の解決：脱落の確定と、脱落がない場合の後処理（S4）を行う
+_resolveDobonPhase(dropoutIndex) {
+const phase = this.dobonPhase;
+if (!phase) return null;
+this.dobonPhase = null;
+const result = { dropoutIndex: dropoutIndex, winProcessed: false, eightGiriProcessed: false, drawPhaseStarted: false, fieldFlowed: false, isGameOver: this.gameState === 'GAME_OVER'};
+this.lastDobonResult = result;
+
+if (dropoutIndex >= 0) {
+this._eliminateByDobon(dropoutIndex);
+result.isGameOver = this.gameState === 'GAME_OVER';
+// ドボンで脱落が出たら場は流れない（本人の裁定2026-11-15、通常・引き共通の一般ルール）。
+// あがり保留・8切り保留もここで取り消される。手番は脱落者の次の生存者へ（3人以上の継続用）
+if (!result.isGameOver) {
+this.currentTurnIndex = this._nextActiveIndex(dropoutIndex);
+}
+return result;
+}
+
+if (phase.kind === 'DRAW') {
+this._finishDrawPhaseNoDropout(phase, result);
+return result;
+}
+
+// 後処理（S4）：あがり保留 ＞ 8切り保留（W-05）
+if (phase.pendingWin) {
+result.winProcessed = true;
+const winner = this.players[phase.playPlayerIndex];
+winner.score += 1;
+this.log(`🎉 ${winner.name} が上がりました！(累計: ${winner.score}pt)`);
+if (RULE_FLAGS.USE_WIN_LIMIT && winner.score >= RULE_FLAGS.TARGET_SCORE) {
+this.log(`🎯 ${winner.name} が目標あがり回数 (${RULE_FLAGS.TARGET_SCORE}回) に到達！`);
+this.finalizeGameResults();
+result.isGameOver = true;
+return result;
+}
+this.processWinSequence(phase.playPlayerIndex, phase.playedCards);
+result.fieldFlowed = true;
+return result;
+}
+
+if (phase.pendingEightGiri) {
+result.eightGiriProcessed = true;
+this._processEightGiri(phase, result);
+return result;
+}
+
+return result;
+}
+
+// ドボンによる脱落の確定。脱落した人の手札は全て捨て札の山へ（本人の裁定2026-11-15、中身は公開しない）
+_eliminateByDobon(playerIndex) {
+const targetP = this.players[playerIndex];
+if (!targetP || targetP.isEliminated) return;
+if (targetP.hand.length > 0) {
+this.discardPile.push(...targetP.hand);
+targetP.hand = [];
+}
+targetP.isEliminated = true;
+this.eliminatedRankCount++;
+// 順位は V-03（外部レビュー修正3、2026-11-16）：先に脱落した人ほど上の順位。1人目脱落=2位、2人目=3位、3人目=4位
+const assignedRank = this.eliminatedRankCount + 1;
+targetP.rank = assignedRank;
+this.log(`☠️ ${targetP.name} が脱落！(${assignedRank}位確定)`);
+
+const remaining = this.players.filter(p =>!p.isEliminated);
+if (remaining.length === 1) {
+remaining[0].rank = 1;
+this.log(`🏆 ${remaining[0].name} が生き残り、1位確定！`);
+this.finalizeGameResults();
+}
+}
+
+// 8切りの後処理（S4）：出した人の次の生存者が1枚引く → 引きドボン判定（ONのときだけ）→ 場が流れて出し手が親のまま（E-03/F-01）
+_processEightGiri(phase, result) {
+const playIdx = phase.playPlayerIndex;
+const drawerIdx = this._nextActiveIndex(playIdx);
+this.drawCards(drawerIdx, 1);
+this.log(`🃏 8切りにより ${this.players[drawerIdx].name} が 1枚 ドローしました`);
+
+if (this.fieldCards.length === 0) {
+// 山札・捨て札とも空で配り直しになった：引きも引きドボン判定も取り消し（R-02/F-09）
+this.currentTurnIndex = playIdx;
+return;
+}
+
+if (RULE_FLAGS.DRAW_DOBON && this._dobonEligible(drawerIdx, null)) {
+// 引きドボンサブフェーズへ（場が流れる前に入る。F-05）
+this.dobonPhase = {
+kind: 'DRAW',
+context: 'EIGHT_GIRI',
+headIndex: playIdx,
+chain: [playIdx],
+declaredPlayers: new Set(),
+askedPlayer: drawerIdx,
+askKind: 'DECLARE',
+declareQueue: [],
+pendingWin: false,
+pendingEightGiri: false,
+playedCards: [],
+playPlayerIndex: playIdx,
+drawerIndex: drawerIdx
+};
+result.drawPhaseStarted = true;
+return;
+}
+
+this.clearField(playIdx, false);
+this.currentTurnIndex = playIdx;
+result.fieldFlowed = true;
+}
+
+// 引きドボンで脱落が出なかった場合の、元の流れへの復帰
+_finishDrawPhaseNoDropout(phase, result) {
+if (phase.context === 'PASS') {
+// パスの後処理（場流れ・手番確定）へ戻る
+this._finishPassFlow();
+result.fieldFlowed = this.fieldCards.length === 0;
+} else if (phase.context === 'EIGHT_GIRI') {
+// 場が流れて、8切りをした人が親のまま
+this.clearField(phase.headIndex, false);
+this.currentTurnIndex = phase.headIndex;
+result.fieldFlowed = true;
+}
+}
+
+    canPlayCards(selectedCards, declaredType = null) {
+        if (selectedCards.length === 0) return { valid: false, reason: 'カードを選択してください' };
+
+        const isJokerOnField = this.fieldCards.length === 1 && this.fieldCards[0].isJoker;
+        const isSpade3OnField = this.fieldCards.length === 1 && this.fieldCards[0].suit === '♠' && this.fieldCards[0].num === 3;
+        const is8OnField = this.fieldCards.length > 0 && this.fieldCards.every(c => c.num === 8);
+
+        if (RULE_FLAGS.FOUR_STOP && is8OnField) {
+            const isAll4 = selectedCards.every(c => c.num === 4);
+            const req4Count = this.fieldCardCount * 2;
+            if (isAll4 && selectedCards.length === req4Count) return { valid: true };
+            return { valid: false, reason: `8切り阻止には 4 を ${req4Count} 枚出す必要があります` };
+        }
+
+        if (isJokerOnField) {
+            const isSpade3 = selectedCards.length === 1 && selectedCards[0].suit === '♠' && selectedCards[0].num === 3;
+            const isDia3 = RULE_FLAGS.DIA3_SPECIAL && selectedCards.length === 1 && selectedCards[0].suit === '♦' && selectedCards[0].num === 3 && !this.isReverse();
+            if (isSpade3 || isDia3) return { valid: true };
+            return { valid: false, reason: 'JOKERには ♠3 または ♦3 のみ重ねられます' };
+        }
+
+        if (isSpade3OnField && this.spade3Lock) {
+            const isDia3 = RULE_FLAGS.DIA3_SPECIAL && selectedCards.length === 1 && selectedCards[0].suit === '♦' && selectedCards[0].num === 3 && !this.isReverse();
+            if (isDia3) return { valid: true };
+            return { valid: false, reason: '♠3 の直後には ♦3 のみ重ねられます' };
+        }
+
+        const playInfo = this.analyzePlayInContext(selectedCards, declaredType);
+        if (!playInfo) return { valid: false, reason: '出せる組み合わせではありません（同じ数字か、同じスートの階段で出してください）' };
+
+        if (this.fieldCards.length === 0) return { valid: true };
+
+        if (RULE_FLAGS.ENABLE_SHIBARI && this.shibariSuit) {
+            const matchesShibari = selectedCards.every(c => c.isJoker || c.suit === this.shibariSuit);
+            if (!matchesShibari) return { valid: false, reason: `スート【${this.shibariSuit}】縛り中！` };
+        }
+
+        if (selectedCards.length !== this.fieldCardCount) {
+            return { valid: false, reason: `場と同じ ${this.fieldCardCount} 枚で出す必要があります` };
+        }
+
+        const fieldInfo = this.fieldPlayInfo || this.analyzePlay(this.fieldCards);
+        // JK単体は「2（逆転時は3）」に固定されるため、headCard（合成した2／3）で比べると同値で弾かれてしまう。
+        // 仕様 S-01／S-02 ではJKは通常時2より強く、逆転時も3より強いので、単体JKはJK自身の強さで比べる（外部レビュー修正2、2026-11-16）
+        // ※ペア・階段でのJKの固定（G-04・G-05・T-10）は従来通り headCard で比べる
+        const newStrength = (selectedCards.length === 1 && selectedCards[0].isJoker)
+            ? this.getCardStrength(selectedCards[0], true)
+            : this.getCardStrength(playInfo.headCard, selectedCards.length === 1);
+        const fieldStrength = fieldInfo
+            ? this.getCardStrength(fieldInfo.headCard, this.fieldCards.length === 1)
+            : this.getCardStrength(this.fieldCards[0], this.fieldCards.length === 1);
+
+        if (newStrength <= fieldStrength) {
+            return { valid: false, reason: '場より強いカードを出してください' };
+        }
+
+        return { valid: true };
+    }
+
+    playCards(playerIndex, cardIndices, targetBombNum = null, declaredType = null) {
+        if (this.gameState === 'GAME_OVER') return { isGameOver: true };
+        this.lastDobonResult = null;
+
+        const player = this.players[playerIndex];
+        const selectedCards = cardIndices.map(idx => player.hand[idx]);
+        // 効果の判定は、JKが固定された数字で行う（T-11）
+        const playInfo = this.analyzePlayInContext(selectedCards, declaredType);
+        const effNum = (c) => c.isJoker ? (playInfo && playInfo.assignedNums.has(c) ? playInfo.assignedNums.get(c) : 0) : c.num;
+        const cardStrList = selectedCards.map(c => c.isJoker ? 'JOKER' : `${c.suit}${c.num}`).join(',');
+
+        this.log(`${player.name} が [${cardStrList}] を出しました`);
+
+        // 新しいカードが場に出されたため、全員のパス状態を解除！
+        this.passedPlayers.clear();
+
+        player.hand = player.hand.filter((_, idx) => !cardIndices.includes(idx));
+        this.lastPlayPlayerIndex = playerIndex;
+
+        let resObj = { 
+            isEightGiri: false, is11BackTriggered: false, isRevolutionTriggered: false, 
+            isDia3: false, isFourStop: false, isQBomber: false, 
+            is5Skip: false, is9Reverse: false, isClearAndKeepTurn: false, isGameOver: false, isWonThisTurn: false, playedCards: selectedCards 
+        };
+
+        const is8OnField = this.fieldCards.length > 0 && this.fieldCards.every(c => c.num === 8);
+        if (RULE_FLAGS.FOUR_STOP && is8OnField && selectedCards.every(c => c.num === 4)) {
+            this.log(`🛡️ 4止め成功！8切りを阻止し、【${player.name}】が親再開`);
+            if (selectedCards.length >= 4) {
+                this.isRevolution = !this.isRevolution;
+                this.log(`🔥 4止め4枚出しにより革命が発生しました！`);
+                resObj.isRevolutionTriggered = true;
+            }
+            this.clearField(playerIndex, false);
+            this.currentTurnIndex = playerIndex;
+            resObj.isFourStop = true;
+            resObj.isClearAndKeepTurn = true;
+            return resObj;
+        }
+
+        // Qボンバー処理
+        if (RULE_FLAGS.Q_BOMBER && selectedCards.some(c => c.num === 12)) {
+            const bombNum = targetBombNum || (player.hand.length > 0 ? player.hand[0].num : Math.floor(Math.random() * 13) + 1);
+            if (bombNum !== null) {
+                this.log(`💣 Qボンバー発動！指定された数字 [${bombNum}] のカードが全員の手札から捨て札置き場へ移動！`);
+                this.players.forEach(p => {
+                    const removed = p.hand.filter(c => c.num === bombNum);
+                    if (removed.length > 0) {
+                        this.discardPile.push(...removed);
+                        p.hand = p.hand.filter(c => c.num !== bombNum);
+
+                        // Qボンバーで他プレイヤーの手札が0枚になった場合の上がり処理
+                        if (p.id !== playerIndex && !p.isEliminated && p.hand.length === 0) {
+                            p.score += 1;
+                            this.log(`🎉 【${p.name}】 がQボンバー消滅により上がりました！(累計: ${p.score}pt)`);
+                            if (RULE_FLAGS.USE_WIN_LIMIT && p.score >= RULE_FLAGS.TARGET_SCORE) {
+                                this.log(`🎯 【${p.name}】が目標あがり回数 (${RULE_FLAGS.TARGET_SCORE}回) に到達！`);
+                                this.finalizeGameResults();
+                                resObj.isGameOver = true;
+                            } else {
+                                this.refillHand(p.id, 5);
+                            }
+                        }
+                    }
+                });
+                if (resObj.isGameOver) return resObj;
+            }
+            resObj.isQBomber = true;
+        }
+
+        if (RULE_FLAGS.NINE_REVERSE && selectedCards.some(c => c.num === 9)) {
+            this.turnDirection *= -1;
+            this.log(`↩️ 9リバース発動！ターンの回り順が逆転`);
+            resObj.is9Reverse = true;
+        }
+
+        if (RULE_FLAGS.FIVE_SKIP && selectedCards.some(c => c.num === 5)) {
+            const skipCount = selectedCards.filter(c => c.num === 5).length;
+            this.log(`⏭️ 5スキップ発動！${skipCount}人スキップ`);
+            for (let k = 0; k < skipCount; k++) {
+                this.nextTurn();
+            }
+            resObj.is5Skip = true;
+        }
+
+        if (RULE_FLAGS.REVOLUTION && selectedCards.length >= 4) {
+            this.isRevolution = !this.isRevolution;
+            this.log(`🔥 革命発生！強さが反転しました`);
+            resObj.isRevolutionTriggered = true;
+        }
+
+        if (RULE_FLAGS.ELEVEN_BACK && selectedCards.some(c => effNum(c) === 11)) {
+            this.is11Back = !this.is11Back;
+            this.log(`🔄 11バック発動！一時的に強さが逆転します`);
+            resObj.is11BackTriggered = true;
+        }
+
+        if (RULE_FLAGS.EIGHT_GIRI && selectedCards.some(c => effNum(c) === 8)) {
+            this.log(`✂️ 8切りが出されました（4止め受付中）`);
+            resObj.isEightGiri = true;
+        }
+
+        // ♠3ロック（E-07/E-08）：JK単体の場に♠3単体を重ねたときだけロックがかかる。それ以外の出し方ではロックしない
+        this.spade3Lock = (this.fieldCards.length === 1 && this.fieldCards[0].isJoker && selectedCards.length === 1 && selectedCards[0].suit === '♠' && selectedCards[0].num === 3);
+
+        // JKに、確定した数字をカード自体に持たせる（G-04/G-05/T-10）。場の表示や後続の判定で使う
+        if (playInfo) {
+            selectedCards.forEach(c => {
+                if (c.isJoker && playInfo.assignedNums.has(c)) c.assignedNum = playInfo.assignedNums.get(c);
+            });
+        }
+
+        // 場の更新
+        if (this.fieldCards.length > 0) {
+            this.discardPile.push(...this.fieldCards);
+        }
+        this.fieldCards = selectedCards;
+        this.fieldCardCount = selectedCards.length;
+        this.fieldPlayInfo = playInfo;
+        this.fieldValue = selectedCards.reduce((sum, c) => sum + GodaiEngine.getCardPoint(c), 0);
+
+        // 🌟 あがり判定はドボン判定フェーズの解決まで保留する（項目7）。スコア加算・補充・場流れは後処理（S4）でのみ行う
+        if (player.hand.length === 0) {
+            resObj.isWonThisTurn = true;
+        }
+
+        // ドボン判定フェーズ開始（S2）。質問が無ければその場で解決し、後処理まで進む
+        this.startDobonPhase(playerIndex, { pendingWin: resObj.isWonThisTurn, pendingEightGiri: resObj.isEightGiri, playedCards: selectedCards });
+        if (this.gameState === 'GAME_OVER') {
+            resObj.isGameOver = true;
+        }
+
+        return resObj;
+    }
+
+    processWinSequence(winnerIdx, playedCards) {
+        const player = this.players[winnerIdx];
+        const isSpecialCard = playedCards.some(c => c.num === 3 || c.num === 8 || c.num === 11 || c.num === 2 || c.isJoker);
+        const refillCount = isSpecialCard ? 6 : 5;
+
+        if (isSpecialCard) {
+            this.log(`⚠️ ペナルティ上がり！ ${refillCount}枚補充されます`);
+        }
+
+        this.clearField(winnerIdx, false);
+        this.refillHand(winnerIdx, refillCount);
+        this.currentTurnIndex = winnerIdx;
+    }
+
+    clearField(lastPlayerIdx, isForcedPassDraw) {
+        if (this.fieldCards.length > 0) {
+            this.discardPile.push(...this.fieldCards);
+        }
+        this.fieldCards = [];
+        this.fieldPlayInfo = null;
+        this.fieldValue = 0;
+        this.fieldCardCount = 0;
+        this.shibariSuit = null;
+        this.spade3Lock = false;
+
+        if (this.is11Back) {
+            this.is11Back = false;
+            this.log(`🔄 場が流れたため、11バックが解除されました`);
+        }
+        
+        if (isForcedPassDraw) {
+            this.players.forEach((p, idx) => {
+                if (idx !== lastPlayerIdx && !p.isEliminated) {
+                    this.drawCards(idx, 1);
+                    this.log(`🃏 ${p.name} が 1枚 ドローしました`);
+                }
+            });
+        }
+        this.passedPlayers.clear();
+    }
+
+    passTurn(playerIndex) {
+        if (this.gameState === 'GAME_OVER') return;
+        if (this.fieldCards.length === 0) return; // 場が空のときはパスできない（F-06）
+        if (this.dobonPhase) return; // ドボン判定フェーズの解決中はパスできない
+        this.lastDobonResult = null;
+
+        const p = this.players[playerIndex];
+        this.drawCards(playerIndex, 1);
+        this.passedPlayers.add(playerIndex);
+        this.log(`${p.name} がパスしました`);
+
+        if (this.fieldCards.length === 0) {
+            // 引いた途中で山札・捨て札が枯渇して配り直しになった：引きも引きドボン判定も取り消し（R-02/F-09）
+            this.currentTurnIndex = this.lastPlayPlayerIndex;
+            return;
+        }
+
+        // 🎲 引きドボン：ONのときだけ、引いた直後・場が流れる前にサブフェーズへ入る（項目17、F-05/D-01）
+        if (RULE_FLAGS.DRAW_DOBON && this._dobonEligible(playerIndex, null)) {
+            const origin = this.lastPlayPlayerIndex;
+            this.dobonPhase = {
+                kind: 'DRAW',
+                context: 'PASS',
+                headIndex: origin,
+                chain: [origin],
+                declaredPlayers: new Set(),
+                askedPlayer: playerIndex,
+                askKind: 'DECLARE',
+                declareQueue: [],
+                pendingWin: false,
+                pendingEightGiri: false,
+                playedCards: [],
+                playPlayerIndex: origin,
+                drawerIndex: playerIndex
+            };
+            return;
+        }
+
+        this._finishPassFlow();
+    }
+
+    // パスの後処理：全員（生存者-1）がパスしたら場が流れ、最後に札を出した人が親になる。それ以外は次の手番へ（F-02）
+    _finishPassFlow() {
+        const activePlayers = this.players.filter(p => !p.isEliminated);
+        const passCount = activePlayers.filter(p => this.passedPlayers.has(p.id)).length;
+
+        if (passCount >= activePlayers.length - 1) {
+            this.log(`全員パスしたため、場が流れます`);
+            // 場に8／♦3があるときの強制ドロー分岐は廃止（本人の裁定2026-11-15）。8切りの引きは後処理（S4）で別途行う
+            this.clearField(this.lastPlayPlayerIndex, false);
+            this.currentTurnIndex = this.lastPlayPlayerIndex;
+        } else {
+            this.nextTurn();
+        }
+    }
+
+    refillHand(playerIndex, count) {
+        this.drawCards(playerIndex, count);
+    }
+
+    drawCards(playerIndex, count) {
+        const drawnList = [];
+        for (let i = 0; i < count; i++) {
+            if (this.deck.length === 0) {
+                if (this.discardPile.length === 0) {
+                    this.log(`⚠️ 山札・捨て札枯渇！ゲーム開始時の手札再配分を実行します。`);
+                    this.reshuffleAllHands();
+                    break;
+                }
+                this.deck = [...this.discardPile];
+                this.discardPile = [];
+                Phaser.Utils.Array.Shuffle(this.deck);
+            }
+            if (this.deck.length > 0) {
+                const card = this.deck.pop();
+                this.players[playerIndex].hand.push(card);
+                drawnList.push(card);
+            }
+        }
+        this.sortHandByStrength(this.players[playerIndex]);
+        return drawnList;
+    }
+
+    reshuffleAllHands() {
+        const allCards = [];
+        this.players.forEach(p => {
+            allCards.push(...p.hand);
+            p.hand = [];
+        });
+        allCards.push(...this.fieldCards);
+        allCards.push(...this.discardPile);
+        allCards.push(...this.deck);
+
+        this.fieldCards = [];
+        this.fieldPlayInfo = null;
+        this.fieldValue = 0;
+        this.fieldCardCount = 0;
+        this.shibariSuit = null;
+        this.isRevolution = false;
+        this.is11Back = false;
+        this.spade3Lock = false;
+        this.dobonPhase = null;
+        this.discardPile = [];
+        this.deck = allCards;
+        Phaser.Utils.Array.Shuffle(this.deck);
+
+        this.players.forEach(p => {
+            if (!p.isEliminated) {
+                p.hand = this.deck.splice(0, 5);
+                this.sortHandByStrength(p);
+            }
+        });
+        this.passedPlayers.clear();
+        this.log(`🃏 全員に初期手札 (5枚) を再配布しました！`);
+    }
+
+    nextTurn() {
+        let loopLimit = 0;
+        do {
+            this.currentTurnIndex = (this.currentTurnIndex + this.turnDirection + this.players.length) % this.players.length;
+            loopLimit++;
+            if (loopLimit > 20) break;
+        } while (this.players[this.currentTurnIndex].isEliminated || this.passedPlayers.has(this.currentTurnIndex));
+    }
+
+    finalizeGameResults() {
+        if (this.gameState === 'GAME_OVER') return;
+        this.gameState = 'GAME_OVER';
+
+        const unranked = this.players.filter(p => p.rank === null);
+        unranked.sort((a, b) => b.score - a.score || a.hand.length - b.hand.length);
+
+        const takenRanks = new Set(this.players.filter(p => p.rank !== null).map(p => p.rank));
+        let availableRanks = [1, 2, 3, 4].filter(r => !takenRanks.has(r));
+
+        unranked.forEach((p, idx) => {
+            p.rank = availableRanks[idx];
+        });
+
+        this.log('🏆 --- ゲーム決着！最終リザルト --- 🏆');
+        const sorted = [...this.players].sort((a, b) => a.rank - b.rank);
+        sorted.forEach(p => {
+            this.log(`${p.rank}位: ${p.name} (${p.score}pt)`);
+        });
+    }
+}
+
+class CpuPlayer {
+    static decidePlay(engine, cpuIndex) {
+        const hand = engine.players[cpuIndex].hand;
+        if (hand.length === 0) return null;
+
+        const isJokerOnField = engine.fieldCards.length === 1 && engine.fieldCards[0].isJoker;
+        if (isJokerOnField) {
+            const spade3Idx = hand.findIndex(c => c.suit === '♠' && c.num === 3);
+            if (spade3Idx !== -1) return [spade3Idx];
+
+            const dia3Idx = hand.findIndex(c => c.suit === '♦' && c.num === 3);
+            if (RULE_FLAGS.DIA3_SPECIAL && dia3Idx !== -1 && !engine.isReverse()) return [dia3Idx];
+
+            return null;
+        }
+
+        const numGroups = {};
+        hand.forEach((card, idx) => {
+            const key = card.isJoker ? 'JK' : card.num;
+            if (!numGroups[key]) numGroups[key] = [];
+            numGroups[key].push(idx);
+        });
+
+        const reqCount = engine.fieldCardCount === 0 ? 0 : engine.fieldCardCount;
+
+        if (reqCount === 0) {
+            const sortedKeys = Object.keys(numGroups).sort((a, b) => {
+                const countDiff = numGroups[b].length - numGroups[a].length;
+                if (countDiff !== 0) return countDiff;
+                return (parseInt(a) || 99) - (parseInt(b) || 99);
+            });
+
+            const bestKey = sortedKeys[0];
+            return numGroups[bestKey];
+        }
+
+        const validCandidates = [];
+
+        for (let key in numGroups) {
+            if (numGroups[key].length >= reqCount) {
+                const candidateIndices = numGroups[key].slice(0, reqCount);
+                const candidateCards = candidateIndices.map(i => hand[i]);
+                if (engine.canPlayCards(candidateCards).valid) {
+                    validCandidates.push({
+                        indices: candidateIndices,
+                        strength: engine.getCardStrength(candidateCards[0], candidateCards.length === 1)
+                    });
+                }
+            }
+        }
+
+        if (validCandidates.length > 0) {
+            validCandidates.sort((a, b) => a.strength - b.strength);
+            return validCandidates[0].indices;
+        }
+
+        return null;
+    }
+}
+
+class MainScene extends Phaser.Scene {
+    constructor() {
+        super({ key: 'MainScene' });
+    }
+
+    create() {
+        this.isAutoMode = false;
+        this.isFastMode = false;
+        this.rawLogHistory = [];
+        this.engine = new GodaiEngine((msg) => this.addLog(msg));
+        this.selectedIndices = [];
+        this.pendingTypeChoice = null; // 型選択待ちの選択インデックス（G-06）
+        this.handContainers = [];
+        this.fieldCardContainers = [];
+
+        this.peer = null;
+        this.conn = null;
+        this.isHost = true;
+        this.myPlayerId = 0;
+
+        this.setupUI();
+        this.setupPeerJS();
+        this.setupKeyboardShortcuts();
+        this.setupModalEvents();
+        this.updateDisplay();
+    }
+
+    setupModalEvents() {
+        const modal = document.getElementById('rule-modal');
+        document.getElementById('btn-close-rule').addEventListener('click', () => {
+            modal.style.display = 'none';
+        });
+
+        const bindRuleCheck = (id, key, name) => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('change', (e) => {
+                    RULE_FLAGS[key] = e.target.checked;
+                    this.engine.log(`⚙️ ${name} 設定: ${RULE_FLAGS[key] ? '有効' : '無効'}`);
+                });
+            }
+        };
+
+        bindRuleCheck('chk-shibari', 'ENABLE_SHIBARI', 'スート縛り');
+        bindRuleCheck('chk-eight', 'EIGHT_GIRI', '8切り');
+        bindRuleCheck('chk-eleven', 'ELEVEN_BACK', '11バック');
+        bindRuleCheck('chk-rev', 'REVOLUTION', '革命');
+        bindRuleCheck('chk-dia3', 'DIA3_SPECIAL', '♦3Special');
+        bindRuleCheck('chk-penalty', 'SPECIAL_FINISH_PENALTY', 'ペナルティ上がり');
+        bindRuleCheck('chk-four', 'FOUR_STOP', '4止め');
+        bindRuleCheck('chk-qbomb', 'Q_BOMBER', 'Qボンバー');
+        bindRuleCheck('chk-five', 'FIVE_SKIP', '5スキップ');
+        bindRuleCheck('chk-nine', 'NINE_REVERSE', '9リバース');
+        bindRuleCheck('chk-draw-dobon', 'DRAW_DOBON', '引きドボン');
+        bindRuleCheck('chk-seven-pass', 'SEVEN_PASS', '7渡し');
+        bindRuleCheck('chk-ten-discard', 'TEN_DISCARD', '10捨て');
+
+        const chkWinLimit = document.getElementById('chk-win-limit');
+        const numWinTarget = document.getElementById('num-win-target');
+
+        chkWinLimit.addEventListener('change', (e) => {
+            RULE_FLAGS.USE_WIN_LIMIT = e.target.checked;
+            this.engine.log(`⚙️ 回数あがり終了設定: ${RULE_FLAGS.USE_WIN_LIMIT ? `${RULE_FLAGS.TARGET_SCORE}回で終了` : 'ドボン縛りモード'}`);
+        });
+
+        numWinTarget.addEventListener('change', (e) => {
+            const val = parseInt(e.target.value) || 5;
+            RULE_FLAGS.TARGET_SCORE = val;
+            this.engine.log(`⚙️ 目標あがり回数を [${val}回] に変更しました`);
+        });
+    }
+
+    setupPeerJS() {
+        this.peer = new Peer();
+
+        this.peer.on('open', (id) => {
+            document.getElementById('my-peer-id').innerText = id;
+            this.engine.log(`📡 PeerJS 接続完了 (ID: ${id})`);
+        });
+
+        this.peer.on('connection', (conn) => {
+            this.conn = conn;
+            this.isHost = true;
+            this.myPlayerId = 0;
+            // オンライン対戦は2人戦（③-2）。接続時は人数が同じでも無条件に2人で初期化し直す
+            // （人数条件つきだと、2人CPU戦の状態＝P2の「CPU (P2)」名や進行がそのまま対戦に残ってしまう）
+            this.engine.initGame(2);
+            this.engine.players[1].isCpu = false;
+            this.engine.log(`🤝 ゲストプレイヤーが接続しました！`);
+            this.updateDisplay();
+            this.setupConnectionHandlers();
+        });
+
+        document.getElementById('btn-copy-id').addEventListener('click', () => {
+            const peerId = document.getElementById('my-peer-id').innerText;
+            if (peerId && peerId !== '発行中...') {
+                navigator.clipboard.writeText(peerId);
+                alert(`📋 IDをコピーしました:\n${peerId}`);
+            }
+        });
+
+        document.getElementById('btn-paste').addEventListener('click', async () => {
+            try {
+                const text = await navigator.clipboard.readText();
+                document.getElementById('join-peer-id').value = text.trim();
+            } catch (err) {
+                alert('クリップボードからの貼り付けに失敗しました。');
+            }
+        });
+
+        document.getElementById('btn-connect').addEventListener('click', () => {
+            const targetId = document.getElementById('join-peer-id').value.trim();
+            if (!targetId) return;
+
+            this.conn = this.peer.connect(targetId);
+            this.isHost = false;
+            this.myPlayerId = 1;
+            // ゲスト側も接続時は無条件に2人戦で初期化し直す（実際の状態はホストの同期で上書きされる）
+            this.engine.initGame(2);
+            this.engine.log(`🔗 ホスト [${targetId}] に接続要求を送信...`);
+            this.setupConnectionHandlers();
+        });
+
+        document.getElementById('btn-single-play').addEventListener('click', () => {
+            // オンライン対戦中（接続が開いている間）は1人テストを開始しない。
+            // 対戦中に初期化し直すと、ホスト側では4人CPU戦が始まって同期で相手にも伝播し、
+            // ゲスト側では自画面だけ4人化してしまう（2026-11-16 実機報告の根本原因）
+            if (this.conn && this.conn.open) {
+                this.engine.log('⚠️ オンライン対戦中は1人テストを開始できません');
+                return;
+            }
+            this.isHost = true;
+            this.myPlayerId = 0;
+            // 1人テスト（CPU戦）は人数セレクト（2〜4人、既定2人）で初期化する（エンジン側で2〜4に丸める）
+            const countEl = document.getElementById('sel-player-count');
+            const count = countEl ? (parseInt(countEl.value, 10) || 2) : 2;
+            this.engine.initGame(count);
+            this.engine.players[1].name = 'CPU (P2)';
+            this.engine.log(`🤖 1人テストモード（${this.engine.players.length}人）で開始します`);
+            this.updateDisplay();
+            this.checkTurnState();
+        });
+    }
+
+    setupKeyboardShortcuts() {
+        this.input.keyboard.on('keydown-ZERO', () => { this.toggleFastMode(); });
+    }
+
+    toggleAutoMode() {
+        this.isAutoMode = !this.isAutoMode;
+        this.autoBtn.txt.setText(`🤖 AI: ${this.isAutoMode ? 'ON' : 'OFF'}`);
+        this.autoBtn.bg.setFillStyle(this.isAutoMode ? 0x4caf50 : 0x009688);
+        if (this.isAutoMode && this.engine.currentTurnIndex === this.myPlayerId) {
+            this.checkTurnState();
+        }
+    }
+
+    toggleFastMode() {
+        this.isFastMode = !this.isFastMode;
+        this.isAutoMode = this.isFastMode ? true : this.isAutoMode;
+        this.autoBtn.txt.setText(`🤖 AI: ${this.isAutoMode ? 'ON' : 'OFF'}`);
+        this.autoBtn.bg.setFillStyle(this.isAutoMode ? 0x4caf50 : 0x009688);
+        this.fastBtn.txt.setText(`⚡ 高速: ${this.isFastMode ? 'ON' : 'OFF'}`);
+        this.fastBtn.bg.setFillStyle(this.isFastMode ? 0x4caf50 : 0xe91e63);
+
+        if (this.isFastMode && this.engine.currentTurnIndex === this.myPlayerId) {
+            this.checkTurnState();
+        }
+    }
+
+    setupConnectionHandlers() {
+        this.conn.on('open', () => {
+            this.engine.log(`✅ 通信が確立されました！`);
+            if (this.isHost) {
+                this.syncGameState();
+            }
+        });
+
+        this.conn.on('data', (data) => {
+            this.handleNetworkData(data);
+        });
+    }
+
+    // N-06：同期の最小化。他人の手札の中身・山札・捨て札の中身は送らず、枚数だけを送る
+    projectPlayerForGuest(p, guestIdx) {
+        if (p.id === guestIdx) return p; // ゲスト本人の情報はそのまま（手札を含む）
+        return {
+            id: p.id,
+            name: p.name,
+            isCpu: p.isCpu,
+            score: p.score,
+            isEliminated: p.isEliminated,
+            rank: p.rank,
+            handCount: p.hand.length,
+            // 親決めの公開カードは対戦開始後は全員に見える情報なので送る。選択中は伏せる
+            startCard: this.engine.gameState === 'START_CHOICE' ? null : p.startCard
+        };
+    }
+
+    // N-04：ドボン判定フェーズの同期。質問（誰に・何を聞いているか）は、聞かれている本人がゲストのときだけ送る
+    projectDobonPhaseForGuest(guestIdx) {
+        const ph = this.engine.dobonPhase;
+        if (!ph) return null;
+        const askedIsGuest = ph.askedPlayer === guestIdx;
+        return {
+            kind: ph.kind,
+            chain: ph.chain.slice(),
+            declaredPlayers: Array.from(ph.declaredPlayers),
+            askedPlayer: askedIsGuest ? ph.askedPlayer : null,
+            askKind: askedIsGuest ? ph.askKind : null,
+            pendingWin: ph.pendingWin,
+            pendingEightGiri: ph.pendingEightGiri
+        };
+    }
+
+    syncGameState() {
+        if (!this.isHost || !this.conn) return;
+
+        const guestIdx = 1; // 2人戦：ゲストは常にプレイヤー1
+        const stateData = {
+            type: 'SYNC_STATE',
+            deckCount: this.engine.deck.length,
+            discardCount: this.engine.discardPile.length,
+            players: this.engine.players.map(p => this.projectPlayerForGuest(p, guestIdx)),
+            fieldCards: this.engine.fieldCards,
+            fieldValue: this.engine.fieldValue,
+            fieldCardCount: this.engine.fieldCardCount,
+            turnDirection: this.engine.turnDirection,
+            shibariSuit: this.engine.shibariSuit,
+            currentTurnIndex: this.engine.currentTurnIndex,
+            lastPlayPlayerIndex: this.engine.lastPlayPlayerIndex,
+            isRevolution: this.engine.isRevolution,
+            is11Back: this.engine.is11Back,
+            gameState: this.engine.gameState,
+            logs: this.rawLogHistory,
+            // ②の申し送り：フェーズ進行に必要な状態も同期する
+            spade3Lock: this.engine.spade3Lock,
+            fieldPlayInfo: this.engine.fieldPlayInfo
+                ? { type: this.engine.fieldPlayInfo.type, headNum: this.engine.fieldPlayInfo.headNum, headCard: this.engine.fieldPlayInfo.headCard }
+                : null,
+            passedPlayers: Array.from(this.engine.passedPlayers),
+            eliminatedRankCount: this.engine.eliminatedRankCount,
+            dobonPhase: this.projectDobonPhaseForGuest(guestIdx)
+        };
+        this.conn.send(stateData);
+    }
+
+    handleNetworkData(data) {
+        // 不正な形式（null・非オブジェクト）は無視する。相手側の不具合や旧版の送信で
+        // 受信処理が例外を投げると対戦が止まるため、入口で弾く（先回り監査第2弾 A2-N01/A2-N03）
+        if (!data || typeof data !== 'object') return;
+        // 送信者検証（N-03 の前提）：ホストが受け付けるアクションは、接続相手であるゲストの席（1番）のものだけ。
+        // 自分の席（0番）など他人の席を名乗るアクションは、誤送信でも、なりすましでも受け付けない
+        if (this.isHost && typeof data.type === 'string' && data.type.startsWith('ACTION_') && data.playerIdx !== 1) {
+            return;
+        }
+        if (data.type === 'SYNC_STATE') {
+            // 状態同期はホスト→ゲストの一方通行。ホストが受け取っても適用しない
+            // （誤送信やなりすましでホストの状態が丸ごと上書きされるのを防ぐ）
+            if (this.isHost) return;
+            // 欠落した同期（players が配列でない）は適用しない。中途半端に復元すると
+            // 場や手札が壊れたまま対戦が続くため、丸ごと無視して次の正常な同期を待つ（先回り監査第2弾 A2-N04）
+            if (!Array.isArray(data.players)) return;
+            // N-06：相手の手札・山札・捨て札は中身が届かないため、枚数ぶんのダミーで復元する
+            const dummyCard = (id) => ({ suit: 'JK', num: 0, isJoker: true, id });
+            this.engine.deck = Array.from({ length: data.deckCount || 0 }, (_, i) => dummyCard(`dummy-deck-${i}`));
+            this.engine.discardPile = Array.from({ length: data.discardCount || 0 }, (_, i) => dummyCard(`dummy-discard-${i}`));
+            this.engine.players = data.players.map(pp => {
+                if (Array.isArray(pp.hand)) return pp; // 自分自身は実データ
+                return {
+                    id: pp.id,
+                    name: pp.name,
+                    isCpu: pp.isCpu,
+                    score: pp.score,
+                    isEliminated: pp.isEliminated,
+                    rank: pp.rank,
+                    startCard: pp.startCard || null,
+                    hand: Array.from({ length: pp.handCount || 0 }, (_, i) => dummyCard(`dummy-hand-${pp.id}-${i}`))
+                };
+            });
+            this.engine.fieldCards = Array.isArray(data.fieldCards) ? data.fieldCards : [];
+            this.engine.fieldValue = data.fieldValue;
+            this.engine.fieldCardCount = typeof data.fieldCardCount === 'number' ? data.fieldCardCount : this.engine.fieldCards.length;
+            this.engine.turnDirection = data.turnDirection;
+            this.engine.shibariSuit = data.shibariSuit;
+            this.engine.currentTurnIndex = data.currentTurnIndex;
+            this.engine.lastPlayPlayerIndex = data.lastPlayPlayerIndex;
+            this.engine.isRevolution = data.isRevolution;
+            this.engine.is11Back = data.is11Back;
+            this.engine.gameState = data.gameState;
+            // ②の申し送り分の復元
+            this.engine.spade3Lock = !!data.spade3Lock;
+            if (data.fieldPlayInfo) {
+                const assignedNums = new Map();
+                this.engine.fieldCards.forEach((c, i) => { if (c.assignedNum !== undefined) assignedNums.set(i, c.assignedNum); });
+                this.engine.fieldPlayInfo = { type: data.fieldPlayInfo.type, headNum: data.fieldPlayInfo.headNum, headCard: data.fieldPlayInfo.headCard, assignedNums };
+            } else {
+                this.engine.fieldPlayInfo = null;
+            }
+            this.engine.passedPlayers = new Set(data.passedPlayers || []);
+            this.engine.eliminatedRankCount = data.eliminatedRankCount || 0;
+            this.engine.dobonPhase = data.dobonPhase
+                ? { ...data.dobonPhase, declaredPlayers: new Set(data.dobonPhase.declaredPlayers || []) }
+                : null;
+
+            this.rawLogHistory = Array.isArray(data.logs) ? data.logs : [];
+            if (this.logElement) {
+                this.logElement.innerHTML = this.rawLogHistory.join('<br/>') + '<br/>';
+                this.logElement.scrollTop = this.logElement.scrollHeight;
+            }
+
+            this.updateDisplay();
+            this.checkTurnState();
+        } else if (data.type === 'ACTION_START_CHOICE') {
+            if (this.isHost) {
+                // N-03：ホスト検証（対戦開始フェーズ・未選択・本人の手札にあるカードIDであること）
+                if (this.engine.gameState !== 'START_CHOICE') return;
+                const p = this.engine.players[data.playerIdx];
+                if (!p || p.isCpu || p.startCard) return;
+                const cardIndex = p.hand.findIndex(c => c.id === data.cardId);
+                if (cardIndex < 0) return;
+                this.engine.selectStartCard(data.playerIdx, cardIndex);
+                const allSelected = this.engine.players.every(pp => pp.startCard || pp.isCpu);
+                if (allSelected) {
+                    this.engine.finalizeStartChoice();
+                    this.updateDisplay();
+                    this.syncGameState();
+                    this.time.delayedCall(this.isFastMode ? 0 : 1000, () => this.checkTurnState());
+                }
+            }
+        } else if (data.type === 'ACTION_PLAY') {
+            if (this.isHost) {
+                // N-02/N-03：カードIDで受け取り、送信者・手番・フェーズ・出せる組み合わせをホストが検証する。
+                // 検証に失敗した操作は丸ごと無視する（部分的に適用しない）
+                if (this.engine.gameState !== 'PLAYING' || this.engine.dobonPhase) return;
+                const p = this.engine.players[data.playerIdx];
+                if (!p || p.isCpu) return;
+                if (data.playerIdx !== this.engine.currentTurnIndex) return;
+                if (!Array.isArray(data.cardIds) || data.cardIds.length === 0) return;
+                const indices = [];
+                const used = new Set();
+                for (const cid of data.cardIds) {
+                    const ix = p.hand.findIndex((c, i) => c.id === cid && !used.has(i));
+                    if (ix < 0) return;
+                    used.add(ix);
+                    indices.push(ix);
+                }
+                const cards = indices.map(i => p.hand[i]);
+                const declaredType = (data.declaredType === 'same' || data.declaredType === 'sequence') ? data.declaredType : null;
+                if (!this.engine.canPlayCards(cards, declaredType).valid) return;
+                this.executePlay(data.playerIdx, indices, declaredType);
+                this.syncGameState();
+            }
+        } else if (data.type === 'ACTION_PASS') {
+            if (this.isHost) {
+                // N-03：本人の手番・フェーズ中でないことを検証する
+                if (this.engine.gameState !== 'PLAYING' || this.engine.dobonPhase) return;
+                const p = this.engine.players[data.playerIdx];
+                if (!p || p.isCpu) return;
+                if (data.playerIdx !== this.engine.currentTurnIndex) return;
+                this.engine.passTurn(data.playerIdx);
+                this.updateDisplay();
+                this.syncGameState();
+                if (this.engine.dobonPhase) {
+                    this.handleDobonPhase();
+                } else {
+                    this.checkTurnState();
+                }
+            }
+        } else if (data.type === 'ACTION_DOBON' || data.type === 'ACTION_DOBON_ANSWER') {
+            if (this.isHost) {
+                // フェーズで今聞かれている本人からの回答としてだけ受け付ける（N-04の検証）
+                const q = this.engine.getDobonQuestion();
+                if (q && q.playerIndex === data.playerIdx) {
+                    const yes = data.type === 'ACTION_DOBON' ? true : !!data.yes;
+                    // 「する」の回答は、宣言／返しの成立条件もホスト側で再検証する（N-03）
+                    if (yes) {
+                        const eligible = q.kind === 'RETURN'
+                            ? this.engine.canReturnDobon(data.playerIdx)
+                            : this.engine.canDeclareDobon(data.playerIdx);
+                        if (!eligible) return;
+                    }
+                    const res = this.engine.answerDobon(data.playerIdx, yes);
+                    if (res && res.dropoutIndex >= 0) this.showEffectCutin('💥 DOBON!', 0xff1744);
+                    this.handleDobonPhase();
+                }
+            }
+        }
+    }
+
+    addLog(msg) {
+        this.rawLogHistory.push(msg);
+        if (!this.logElement) {
+            const div = document.createElement('div');
+            div.id = 'log-container';
+            this.logElement = div;
+            this.add.dom(740, 325, div);
+        }
+        this.logElement.innerHTML += msg + '<br/>';
+        this.logElement.scrollTop = this.logElement.scrollHeight;
+    }
+
+    setupUI() {
+        this.bgRect = this.add.rectangle(450, 325, 900, 650, 0x143810);
+
+        this.add.text(320, 20, '五枚大富豪（ゴダイ）', { fontSize: '18px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+        this.add.text(740, 35, '📜 ゲームログ', { fontSize: '15px', color: '#81c784', fontStyle: 'bold' }).setOrigin(0.5);
+
+        this.createButton(740, 600, '📋 ログコピー', 0x4caf50, () => this.copyLogsToClipboard(), 120, 32);
+        this.createButton(740, 65, '📖 ルール説明', 0x2196f3, () => {
+            document.getElementById('rule-modal').style.display = 'block';
+        }, 120, 30);
+
+        this.fieldBg = this.add.rectangle(320, 180, 380, 150, 0x000000, 0.4).setStrokeStyle(2, 0x81c784);
+
+        this.arrowRingGraphics = this.add.graphics().setDepth(5);
+
+        this.ruleStateText = this.add.text(320, 85, '通常モード | 山札: 32 枚', { fontSize: '12px', color: '#81d4fa' }).setOrigin(0.5);
+
+        this.renderDeckVisual();
+
+        this.playerContainers = [
+            this.add.container(320, 430),
+            this.add.container(100, 180),
+            this.add.container(320, 50),
+            this.add.container(540, 180)
+        ];
+
+        this.playerBoxes = [];
+        const pNames = ['ホスト (P1)', 'ゲスト (P2)', 'CPU 1', 'CPU 2'];
+        this.playerContainers.forEach((cont, idx) => {
+            const box = this.add.rectangle(0, 0, 130, 35, 0x222222, 0.85).setStrokeStyle(2, 0x888888);
+            const txt = this.add.text(0, 0, pNames[idx], { fontSize: '11px', color: '#ffffff', align: 'center' }).setOrigin(0.5);
+            cont.add([box, txt]);
+            this.playerBoxes.push({ box, txt, name: pNames[idx] });
+        });
+
+        this.turnText = this.add.text(320, 275, '', { fontSize: '15px', color: '#ffeb3b', fontStyle: 'bold' }).setOrigin(0.5);
+
+        this.totalText = this.add.text(320, 400, '', {
+            fontSize: '15px', color: '#ffde59', fontStyle: 'bold',
+            backgroundColor: '#000000aa', padding: { x: 10, y: 4 }
+        }).setOrigin(0.5);
+
+        this.playBtn = this.createButton(160, 600, 'カードを出す', 0x2196f3, () => this.onPlayerPlay(), 120, 40);
+        this.passBtn = this.createButton(300, 600, '1枚引いてパス', 0xff9800, () => this.onPlayerPassOrCancel(), 130, 40);
+        this.dobonBtn = this.createButton(450, 600, '💥 ドボン！', 0xf44336, () => this.onPlayerDobon(), 120, 40);
+        // 型選択ボタン（G-06）：リードで型が曖昧なときだけ、通常ボタンの代わりに表示する
+        this.typeSameBtn = this.createButton(230, 600, 'トリオで出す', 0x673ab7, () => this.choosePlayType('same'), 150, 40);
+        this.typeSeqBtn = this.createButton(410, 600, '階段で出す', 0x00897b, () => this.choosePlayType('sequence'), 150, 40);
+        this.typeSameBtn.setVisible(false);
+        this.typeSeqBtn.setVisible(false);
+        this.setButtonEnabled(this.typeSameBtn, false);
+        this.setButtonEnabled(this.typeSeqBtn, false);
+
+        this.createButton(50, 460, '📊 強さ順', 0x8e24aa, () => this.sortHand('strength'), 80, 28);
+        this.createButton(135, 460, '♠ スート順', 0x3949ab, () => this.sortHand('suit'), 80, 28);
+        this.autoBtn = this.createButton(70, 25, '🤖 AI: OFF', 0x009688, () => this.toggleAutoMode(), 100, 28);
+        this.fastBtn = this.createButton(180, 25, '⚡ 高速: OFF', 0xe91e63, () => this.toggleFastMode(), 100, 28);
+
+        this.opponentHandContainers = [null, null, null, null];
+        this.ringRotationAngle = 0;
+
+        this.createResultPopup();
+    }
+
+    renderThickArrowRing() {
+        this.arrowRingGraphics.clear();
+        const cx = 320, cy = 180, radius = 95;
+        const isClockwise = (this.engine.turnDirection === 1);
+        const color = isClockwise ? 0x00e676 : 0xff9100;
+        
+        this.arrowRingGraphics.lineStyle(6, color, 0.7);
+        this.ringRotationAngle += (isClockwise ? 0.008 : -0.008);
+        
+        const numArcs = 3;
+        const arcLength = (Math.PI * 2) / numArcs;
+        
+        for (let i = 0; i < numArcs; i++) {
+            const startA = this.ringRotationAngle + i * arcLength;
+            const endA = startA + arcLength * 0.6;
+            
+            this.arrowRingGraphics.beginPath();
+            this.arrowRingGraphics.arc(cx, cy, radius, startA, endA, false);
+            this.arrowRingGraphics.strokePath();
+
+            const tipAngle = isClockwise ? endA : startA;
+            const tipX = cx + Math.cos(tipAngle) * radius;
+            const tipY = cy + Math.sin(tipAngle) * radius;
+            const arrowAngle = tipAngle + (isClockwise ? Math.PI / 2 : -Math.PI / 2);
+
+            this.arrowRingGraphics.fillStyle(color, 0.9);
+            this.arrowRingGraphics.beginPath();
+            this.arrowRingGraphics.fillTriangle(
+                tipX + Math.cos(arrowAngle) * 12, tipY + Math.sin(arrowAngle) * 12,
+                tipX + Math.cos(arrowAngle + 2.3) * 10, tipY + Math.sin(arrowAngle + 2.3) * 10,
+                tipX + Math.cos(arrowAngle - 2.3) * 10, tipY + Math.sin(arrowAngle - 2.3) * 10
+            );
+        }
+    }
+
+    update(time, delta) {
+        if (this.arrowRingGraphics) {
+            this.renderThickArrowRing();
+        }
+    }
+
+    renderDeckVisual() {
+        if (this.deckVisualContainer) this.deckVisualContainer.destroy();
+        this.deckVisualContainer = this.add.container(480, 180).setDepth(20);
+
+        const deckCount = Math.min(5, Math.ceil(this.engine.deck.length / 5));
+        for (let i = 0; i < deckCount; i++) {
+            const cardBack = this.add.rectangle(i * 2, -i * 2, 38, 52, 0xb71c1c).setStrokeStyle(1, 0xffffff);
+            const innerPattern = this.add.rectangle(i * 2, -i * 2, 30, 44, 0x880e4f);
+            this.deckVisualContainer.add([cardBack, innerPattern]);
+        }
+    }
+
+    // 項目2（O-05）：手番タイマー（startTurnTimer／stopTurnTimer／updateTimerDisplay）は廃止した。
+    // 手番にもドボン・返しの回答待ちにも時間制限はなく、放置しても自動代走にはならない
+
+    copyLogsToClipboard() {
+        const text = this.rawLogHistory.join('\n');
+        navigator.clipboard.writeText(text).then(() => {
+            alert('📋 全ゲームログをクリップボードにコピーしました！');
+        });
+    }
+
+    sortHand(type) {
+        const hand = this.engine.players[this.myPlayerId].hand;
+        if (type === 'strength') {
+            hand.sort((a, b) => this.engine.getCardStrength(a) - this.engine.getCardStrength(b));
+        } else if (type === 'suit') {
+            const suitOrder = { '♠': 1, '♥': 2, '♦': 3, '♣': 4, 'JK': 5 };
+            hand.sort((a, b) => (suitOrder[a.suit] || 5) - (suitOrder[b.suit] || 5) || a.num - b.num);
+        }
+        this.selectedIndices = [];
+        this.updateDisplay();
+    }
+
+    showEffectCutin(text, color = 0xffeb3b) {
+        const cutin = this.add.container(320, 200).setDepth(300);
+        const bg = this.add.rectangle(0, 0, 360, 60, 0x000000, 0.85).setStrokeStyle(3, color);
+        const txt = this.add.text(0, 0, text, { fontSize: '22px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+        cutin.add([bg, txt]);
+
+        this.tweens.add({
+            targets: cutin,
+            scaleX: { from: 0.5, to: 1.1 },
+            scaleY: { from: 0.5, to: 1.1 },
+            duration: 250,
+            yoyo: true,
+            hold: 600,
+            onComplete: () => cutin.destroy()
+        });
+    }
+
+    onPlayerDobon() {
+        // ドボンは「ドボン判定フェーズで自分が聞かれているとき」にだけ意味を持つ（O-01。常時押せるボタンではない）
+        const q = this.engine.getDobonQuestion();
+        if (q && q.playerIndex === this.myPlayerId) {
+            this.answerDobonAndContinue(true);
+            return;
+        }
+        if (!this.isHost) {
+            // ゲスト：宣言できそうな場面ではホストへ通知し、フェーズ側の検証に委ねる（完全な同期はPeerJS配線の段階で扱う）
+            if (this.engine.canDeclareDobon(this.myPlayerId)) {
+                this.conn.send({ type: 'ACTION_DOBON', playerIdx: this.myPlayerId });
+            }
+            return;
+        }
+    }
+
+    onPlayerPlay() {
+        if (this.engine.gameState === 'START_CHOICE') {
+            if (this.selectedIndices.length !== 1) {
+                this.turnText.setText('親決定用のカードを1枚だけ選択してください').setColor('#ff9800');
+                return;
+            }
+
+            // N-02：ゲストの操作はインデックスではなくカードIDで送る（選択を消す前に控える）
+            const chosenCard = this.engine.players[this.myPlayerId].hand[this.selectedIndices[0]];
+            this.engine.selectStartCard(this.myPlayerId, this.selectedIndices[0]);
+            this.selectedIndices = [];
+
+            if (this.isHost) {
+                // 全員の選択がそろうまで確定しない（ACTION_START_CHOICE ハンドラと同じ条件）。
+                // ホストが先に選んだ時点で即 finalize すると、未選択のゲストの startCard が
+                // hand[0] で自動補完され、後から届くゲストの選択が破棄されてしまう（順序依存バグ）
+                const allSelected = this.engine.players.every(pp => pp.startCard || pp.isCpu);
+                if (allSelected) {
+                    const starterIdx = this.engine.finalizeStartChoice();
+                    this.updateDisplay();
+                    this.syncGameState();
+                    this.time.delayedCall(this.isFastMode ? 0 : 1000, () => this.checkTurnState());
+                }
+            } else {
+                this.conn.send({ type: 'ACTION_START_CHOICE', playerIdx: this.myPlayerId, cardId: chosenCard ? chosenCard.id : null });
+            }
+            return;
+        }
+
+        const myHand = this.engine.players[this.myPlayerId].hand;
+        const selectedCards = this.selectedIndices.map(idx => myHand[idx]);
+        const check = this.engine.canPlayCards(selectedCards);
+
+        if (!check.valid) {
+            this.turnText.setText(check.reason).setColor('#f44336');
+            return;
+        }
+
+        // リードで型が曖昧な選択なら、まずトリオ／階段を選ばせる（G-06）
+        if (this.isTypeAmbiguousLead(selectedCards)) {
+            this.showTypeChoice();
+            return;
+        }
+
+        if (this.isHost) {
+            this.executePlay(this.myPlayerId, this.selectedIndices);
+            this.syncGameState();
+        } else {
+            // N-02：ゲストの操作は手札のインデックスではなくカードIDで送る
+            this.conn.send({ type: 'ACTION_PLAY', playerIdx: this.myPlayerId, cardIds: selectedCards.map(c => c.id) });
+        }
+        this.selectedIndices = [];
+    }
+
+    // リードで型が曖昧な選択か（G-06。本人の裁定2026-11-15：Q1=A・Q2=B・Q3=B）
+    // 「実カード1枚＋JKだけ」（枚数不問）または「JKだけ」の組み合わせで、トリオ／階段の両方に読める場合だけ true
+    isTypeAmbiguousLead(selectedCards) {
+        if (this.engine.fieldCards.length > 0) return false;
+        if (selectedCards.length < 2) return false;
+        if (selectedCards.filter(c => !c.isJoker).length > 1) return false;
+        return !!this.engine.analyzeAsSame(selectedCards) && !!this.engine.analyzeAsSequence(selectedCards);
+    }
+
+    showTypeChoice() {
+        this.pendingTypeChoice = [...this.selectedIndices];
+        this.turnText.setText('どちらの型で出しますか？').setColor('#ffeb3b');
+        [this.playBtn, this.passBtn, this.dobonBtn].forEach(b => { b.setVisible(false); this.setButtonEnabled(b, false); });
+        [this.typeSameBtn, this.typeSeqBtn].forEach(b => { b.setVisible(true); this.setButtonEnabled(b, true); });
+    }
+
+    hideTypeChoiceButtons() {
+        [this.typeSameBtn, this.typeSeqBtn].forEach(b => { b.setVisible(false); this.setButtonEnabled(b, false); });
+        [this.playBtn, this.passBtn, this.dobonBtn].forEach(b => b.setVisible(true));
+    }
+
+    // カードの選択を変えたら型選択は取り消す
+    cancelTypeChoice() {
+        if (!this.pendingTypeChoice) return;
+        this.pendingTypeChoice = null;
+        this.hideTypeChoiceButtons();
+        this.checkTurnState();
+    }
+
+    choosePlayType(declaredType) {
+        if (!this.pendingTypeChoice) return;
+        const indices = this.pendingTypeChoice;
+        this.pendingTypeChoice = null;
+        this.hideTypeChoiceButtons();
+
+        const myHand = this.engine.players[this.myPlayerId].hand;
+        const selectedCards = indices.map(idx => myHand[idx]);
+        const check = this.engine.canPlayCards(selectedCards, declaredType);
+        if (!check.valid) {
+            this.turnText.setText(check.reason).setColor('#f44336');
+            this.checkTurnState();
+            return;
+        }
+
+        if (this.isHost) {
+            this.executePlay(this.myPlayerId, indices, declaredType);
+            this.syncGameState();
+        } else {
+            // N-02：カードID＋型宣言を送る
+            this.conn.send({ type: 'ACTION_PLAY', playerIdx: this.myPlayerId, cardIds: selectedCards.map(c => c.id), declaredType: declaredType });
+        }
+        this.selectedIndices = [];
+    }
+
+    executePlay(playerIdx, indices, declaredType = null) {
+        if (this.engine.gameState === 'GAME_OVER') return;
+
+        const res = this.engine.playCards(playerIdx, indices, null, declaredType);
+        this.selectedIndices = [];
+
+        if (res.isFourStop) this.showEffectCutin('🛡️ 4止め成功！(8切り阻止)', 0x4caf50);
+        if (res.isEightGiri) this.showEffectCutin('✂️ 8切り発生！', 0xe53935);
+        if (res.isRevolutionTriggered) this.showEffectCutin('🔥 革命発生！', 0xff5722);
+        if (res.is11BackTriggered) this.showEffectCutin('🔄 11バック！', 0x2196f3);
+        if (res.isQBomber) this.showEffectCutin('💣 Qボンバー発動！', 0x795548);
+        if (res.is5Skip) this.showEffectCutin('⏭️ 5スキップ！', 0x00bcd4);
+        if (res.is9Reverse) this.showEffectCutin('↩️ 9リバース！', 0x8bc34a);
+
+        this.updateDisplay();
+
+        if (res.isGameOver) {
+            this.showResultPopup();
+            return;
+        }
+
+        // 💥 ドボン判定フェーズ：あがり・8切りはフェーズ解決後の後処理でエンジンが確定させる
+        if (this.engine.dobonPhase) {
+            this.handleDobonPhase();
+            return;
+        }
+
+        // 後処理（あがり・8切り・脱落）で手番まで確定した場合は、ここで手番を進めない
+        const lr = this.engine.lastDobonResult;
+        const turnSettled = !!lr && (lr.winProcessed || lr.eightGiriProcessed || lr.dropoutIndex >= 0);
+        if (!res.isClearAndKeepTurn && !turnSettled) {
+            this.engine.nextTurn();
+        }
+        this.checkTurnState();
+    }
+
+    // 💥 ドボン判定フェーズの進行役：エンジンの質問状態を読み、CPUにはポリシー回答（できれば必ず宣言・返し）、
+    // 自分には専用の選択ボタンを出し、相手の回答はネットワーク経由で受け取る。フェーズ中はタイマーに依存しない
+    handleDobonPhase() {
+        this.updateDisplay();
+        this.syncGameState();
+
+        if (this.engine.gameState === 'GAME_OVER') {
+            this.showResultPopup();
+            return;
+        }
+
+        const q = this.engine.getDobonQuestion();
+
+        if (!this.isHost && (!q || q.playerIndex !== this.myPlayerId)) {
+            // ゲスト：フェーズの進行はホストだけが持つ（N-04）。自分への質問が届いていない間は
+            // 「ドボン判定中…」を表示して次の同期を待つ（ローカルではフェーズを進めない）
+            this.turnText.setText('ドボン判定中…').setColor('#81d4fa');
+            this.setButtonEnabled(this.playBtn, false);
+            this.setButtonEnabled(this.passBtn, false);
+            this.setButtonEnabled(this.dobonBtn, false);
+            return;
+        }
+
+        if (!q) {
+            // フェーズ解決済み。後処理（S4）で手番まで確定していない場合だけ、ここで手番を確定させる（S5）。
+            // フェーズが非同期に解決した場合（相手の回答・自分の回答・CPUの回答）は executePlay の続きが
+            // 走らないため、この分岐が S5 の担当になる。確定したらゲストへ同期してから手番表示を更新する
+            const lr = this.engine.lastDobonResult;
+            const turnSettled = !!lr && (lr.winProcessed || lr.eightGiriProcessed || lr.dropoutIndex >= 0 || lr.fieldFlowed);
+            if (!turnSettled && this.engine.gameState !== 'GAME_OVER') {
+                this.engine.nextTurn();
+            }
+            this.updateDisplay();
+            this.syncGameState();
+            this.checkTurnState();
+            return;
+        }
+
+        const asked = this.engine.players[q.playerIndex];
+
+        if (this.isHost && (asked.isCpu || (q.playerIndex === this.myPlayerId && this.isAutoMode))) {
+            this.turnText.setText('ドボン判定中…').setColor('#81d4fa');
+            this.time.delayedCall(this.isFastMode ? 0 : 400, () => {
+                const cur = this.engine.getDobonQuestion();
+                if (!cur) { this.handleDobonPhase(); return; }
+                if (cur.playerIndex !== q.playerIndex || cur.kind !== q.kind) { this.handleDobonPhase(); return; }
+                const res = this.engine.answerDobon(q.playerIndex, true);
+                if (res && res.dropoutIndex >= 0) this.showEffectCutin('💥 DOBON!', 0xff1744);
+                this.handleDobonPhase();
+            });
+            return;
+        }
+
+        if (q.playerIndex === this.myPlayerId) {
+            // 自分への質問：「出す／パス」と混ざらない専用の選択にする（O-01）
+            this.setButtonEnabled(this.playBtn, false);
+            if (q.kind === 'DECLARE') {
+                this.turnText.setText('ドボン判定中… ドボンしますか？').setColor('#ffeb3b');
+                this.dobonBtn.txt.setText('💥 ドボンする');
+                this.passBtn.txt.setText('ドボンしない');
+            } else {
+                this.turnText.setText('ドボン判定中… 返しますか？').setColor('#ffeb3b');
+                this.dobonBtn.txt.setText('💥 返す');
+                this.passBtn.txt.setText('返さない');
+            }
+            this.setButtonEnabled(this.dobonBtn, true);
+            this.setButtonEnabled(this.passBtn, true);
+            return;
+        }
+
+        // 相手（ゲスト）の回答待ち：該当者かどうかによらず全員に同じ表示（O-06）。回答は ACTION_DOBON_ANSWER で受け取る
+        this.turnText.setText('ドボン判定中…').setColor('#81d4fa');
+        this.setButtonEnabled(this.playBtn, false);
+        this.setButtonEnabled(this.passBtn, false);
+        this.setButtonEnabled(this.dobonBtn, false);
+    }
+
+    // 自分へのドボン質問に回答する（ボタンからの入口）
+    answerDobonAndContinue(yes) {
+        const q = this.engine.getDobonQuestion();
+        if (!q || q.playerIndex !== this.myPlayerId) return;
+
+        if (this.isHost) {
+            const res = this.engine.answerDobon(this.myPlayerId, yes);
+            if (res && res.dropoutIndex >= 0) this.showEffectCutin('💥 DOBON!', 0xff1744);
+            this.dobonBtn.txt.setText('💥 ドボン！');
+            this.handleDobonPhase();
+        } else {
+            this.conn.send({ type: 'ACTION_DOBON_ANSWER', playerIdx: this.myPlayerId, yes: yes });
+        }
+    }
+
+    animate3StageCardDraw(playerIdx, card, targetSortedIndex, callback) {
+        if (this.isFastMode || playerIdx !== this.myPlayerId || !card) {
+            if (callback) callback();
+            return;
+        }
+
+        const startX = 480, startY = 180;
+        const hoverX = 320, hoverY = 400;
+
+        const cardWidth = 62, maxAreaWidth = 550;
+        const myHand = this.engine.players[this.myPlayerId].hand;
+        const totalCards = myHand.length;
+        const spacing = Math.min(68, maxAreaWidth / totalCards);
+        const finalStartX = 320 - ((totalCards - 1) * spacing) / 2;
+        const finalTargetX = finalStartX + (targetSortedIndex * spacing);
+        const finalTargetY = 520;
+
+        const animCard = this.add.container(startX, startY).setDepth(250);
+        const cardBg = this.add.rectangle(0, 0, cardWidth, 90, 0xb71c1c).setStrokeStyle(1.5, 0xffffff);
+        const innerPattern = this.add.rectangle(0, 0, 48, 72, 0x880e4f);
+        animCard.add([cardBg, innerPattern]);
+
+        this.tweens.add({
+            targets: animCard,
+            x: hoverX,
+            y: hoverY,
+            duration: 350,
+            ease: 'Cubic.easeOut',
+            onComplete: () => {
+                this.tweens.add({
+                    targets: animCard,
+                    scaleX: 0,
+                    duration: 120,
+                    onComplete: () => {
+                        cardBg.setFillStyle(0xffffff).setStrokeStyle(1.5, 0x333333);
+                        innerPattern.destroy();
+
+                        let textColor = (card.suit === '♥' || card.suit === '♦') ? '#d32f2f' : '#111111';
+                        let suitTop = this.add.text(-22, -38, card.isJoker ? 'JK' : card.suit, { fontSize: '13px', color: textColor, fontStyle: 'bold' });
+                        let numCenter = this.add.text(0, -2, card.isJoker ? 'JOKER' : this.getLabel(card.num), { fontSize: '18px', color: textColor, fontStyle: 'bold' }).setOrigin(0.5);
+                        let ptBottom = this.add.text(0, 28, `(${card.num}pt)`, { fontSize: '10px', color: '#666666' }).setOrigin(0.5);
+                        animCard.add([suitTop, numCenter, ptBottom]);
+
+                        this.tweens.add({
+                            targets: animCard,
+                            scaleX: 1,
+                            duration: 120,
+                            onComplete: () => {
+                                this.tweens.add({
+                                    targets: animCard,
+                                    x: finalTargetX,
+                                    y: finalTargetY,
+                                    duration: 350,
+                                    ease: 'Quad.easeInOut',
+                                    onComplete: () => {
+                                        animCard.destroy();
+                                        if (callback) callback();
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+    }
+
+    onPlayerPassOrCancel() {
+        if (this.selectedIndices.length > 0) {
+            this.selectedIndices = [];
+            this.updateDisplay();
+            return;
+        }
+
+        if (this.engine.gameState === 'START_CHOICE' || this.engine.gameState === 'GAME_OVER') return;
+
+        // ドボン判定フェーズで自分が聞かれているときは、このボタンが「しない／返さない」の回答になる（O-01）
+        const q = this.engine.getDobonQuestion();
+        if (q && q.playerIndex === this.myPlayerId) {
+            this.answerDobonAndContinue(false);
+            return;
+        }
+
+        if (this.isHost) {
+            // パスの処理（引く→引きドボン判定→場流れ判断）はエンジンの passTurn に一本化する
+            this.engine.passTurn(this.myPlayerId);
+            this.selectedIndices = [];
+            this.updateDisplay();
+            this.syncGameState();
+            if (this.engine.gameState === 'GAME_OVER') {
+                this.showResultPopup();
+            } else if (this.engine.dobonPhase) {
+                this.handleDobonPhase();
+            } else {
+                this.checkTurnState();
+            }
+        } else {
+            this.conn.send({ type: 'ACTION_PASS', playerIdx: this.myPlayerId });
+        }
+    }
+
+    checkTurnState() {
+        if (this.engine.gameState === 'GAME_OVER') {
+            this.showResultPopup();
+            return;
+        }
+
+        // ドボン判定フェーズ中は、手番の確定よりフェーズの進行が優先する
+        if (this.engine.dobonPhase) {
+            this.handleDobonPhase();
+            return;
+        }
+
+        const currentP = this.engine.players[this.engine.currentTurnIndex];
+        this.updatePlayerHighlights();
+
+        const isMyTurn = (this.engine.currentTurnIndex === this.myPlayerId);
+
+        if (this.engine.gameState === 'START_CHOICE') {
+            this.turnText.setText('【親決め】カードを1枚選択してください').setColor('#ffeb3b');
+            this.setButtonEnabled(this.playBtn, true);
+            this.setButtonEnabled(this.passBtn, false);
+
+            if (this.isAutoMode && isMyTurn) {
+                this.engine.selectStartCard(this.myPlayerId, 0);
+                if (this.isHost) {
+                    // onPlayerPlay と同じゲート：全員の選択がそろうまで確定しない
+                    const allSelected = this.engine.players.every(pp => pp.startCard || pp.isCpu);
+                    if (allSelected) {
+                        this.engine.finalizeStartChoice();
+                        this.updateDisplay();
+                        this.syncGameState();
+                        this.time.delayedCall(this.isFastMode ? 0 : 1000, () => this.checkTurnState());
+                    }
+                }
+            }
+            return;
+        }
+
+        if (isMyTurn && !this.isAutoMode) {
+            this.turnText.setText('【あなたのターン】').setColor('#ffeb3b');
+            this.setButtonEnabled(this.playBtn, true);
+            this.setButtonEnabled(this.passBtn, true);
+        } else {
+            this.setButtonEnabled(this.playBtn, false);
+            this.setButtonEnabled(this.passBtn, false);
+            const title = (isMyTurn && this.isAutoMode) ? `${currentP.name} (AUTO)` : currentP.name;
+            this.turnText.setText(`【${title} のターン】思考中...`).setColor('#81d4fa');
+
+            const delay = this.isFastMode ? 0 : 700;
+
+            if (this.isHost) {
+                if (currentP.isCpu || (isMyTurn && this.isAutoMode)) {
+                    this.time.delayedCall(delay, () => {
+                        if (this.engine.gameState === 'GAME_OVER') return;
+                        const indices = CpuPlayer.decidePlay(this.engine, currentP.id);
+                        if (indices) {
+                            this.executePlay(currentP.id, indices);
+                        } else {
+                            this.engine.passTurn(currentP.id);
+                            this.updateDisplay();
+                            if (this.engine.dobonPhase) {
+                                this.handleDobonPhase();
+                            } else {
+                                this.checkTurnState();
+                            }
+                        }
+                        this.syncGameState();
+                    });
+                }
+            }
+        }
+    }
+
+    updatePlayerHighlights() {
+        this.playerBoxes.forEach((item, idx) => {
+            const p = this.engine.players[idx];
+            if (!p) {
+                // 2人戦では3・4人目の枠は使わない
+                item.box.setVisible(false);
+                item.txt.setVisible(false);
+                return;
+            }
+            item.box.setVisible(true);
+            item.txt.setVisible(true);
+            const isTurn = (idx === this.engine.currentTurnIndex);
+            item.box.setStrokeStyle(isTurn ? 3 : 1, isTurn ? 0xffeb3b : 0x888888);
+            item.txt.setColor(isTurn ? '#ffeb3b' : '#ffffff');
+            
+            if (p.isEliminated) {
+                item.txt.setText(`${p.name}\n(${p.rank}位脱落)`);
+            } else {
+                item.txt.setText(`${p.name}\n手札:${p.hand.length}枚 | ${p.score}pt`);
+            }
+        });
+    }
+
+    updateDisplay() {
+        const myHand = this.engine.players[this.myPlayerId].hand;
+        const handTotal = GodaiEngine.getHandTotal(myHand);
+        const winLimitLabel = RULE_FLAGS.USE_WIN_LIMIT ? `${RULE_FLAGS.TARGET_SCORE}回あがり終了` : 'ドボン縛り';
+        this.totalText.setText(`手札合計: ${handTotal} 点 (${myHand.length}枚) | あがりpt: ${this.engine.players[this.myPlayerId].score}pt [${winLimitLabel}]`);
+
+        const isRev = this.engine.isReverse();
+        this.bgRect.setFillStyle(isRev ? 0x221133 : 0x143810);
+
+        let modeStr = [];
+        if (this.engine.isRevolution) modeStr.push('🔥 革命中');
+        if (this.engine.is11Back) modeStr.push('🔄 11バック中');
+        if (this.engine.shibariSuit) modeStr.push(`🔒 【${this.engine.shibariSuit}】縛り中`);
+        if (this.engine.turnDirection === -1) modeStr.push('↩️ 逆回り');
+        const modeText = modeStr.length > 0 ? modeStr.join(' / ') : '通常モード';
+        this.ruleStateText.setText(`${modeText} | 山札: ${this.engine.deck.length} 枚 (捨て札: ${this.engine.discardPile.length} 枚)`);
+
+        this.renderDeckVisual();
+        this.renderFieldCardsVisual();
+
+        // ドボンボタンは、フェーズで自分が聞かれているときだけ有効（ゲスト時は宣言可能な場面で有効）
+        const dq = this.engine.getDobonQuestion();
+        const canDobonNow = dq ? (dq.playerIndex === this.myPlayerId) : (!this.isHost && this.engine.canDeclareDobon(this.myPlayerId));
+        this.setButtonEnabled(this.dobonBtn, !!canDobonNow);
+
+        if (this.selectedIndices.length > 0) {
+            this.passBtn.txt.setText('選択キャンセル');
+            this.passBtn.color = 0x9e9e9e;
+        } else {
+            this.passBtn.txt.setText(this.engine.fieldCards.length === 0 ? '山札から引く' : '1枚引いてパス');
+            this.passBtn.color = 0xff9800;
+        }
+        this.setButtonEnabled(this.passBtn, this.passBtn.enabled);
+
+        this.renderHandCards();
+        this.renderOpponentHands();
+        this.updatePlayerHighlights();
+    }
+
+    renderFieldCardsVisual() {
+        this.fieldCardContainers.forEach(c => c.destroy());
+        this.fieldCardContainers = [];
+
+        const cards = this.engine.fieldCards;
+        if (cards.length === 0) return;
+
+        const total = cards.length;
+        const spacing = 32;
+        const startX = 320 - ((total - 1) * spacing) / 2;
+        const y = 180;
+
+        cards.forEach((card, idx) => {
+            const x = startX + idx * spacing;
+            const container = this.add.container(x, y).setDepth(100);
+
+            const cardBg = this.add.rectangle(0, 0, 48, 68, 0xffffff).setStrokeStyle(1.5, 0x333333);
+            let textColor = (card.suit === '♥' || card.suit === '♦') ? '#d32f2f' : '#111111';
+
+            let suitText = this.add.text(-18, -28, card.isJoker ? 'JK' : card.suit, { fontSize: '11px', color: textColor, fontStyle: 'bold' });
+            let numText = this.add.text(0, -2, card.isJoker ? 'JOKER' : this.getLabel(card.num), { fontSize: '15px', color: textColor, fontStyle: 'bold' }).setOrigin(0.5);
+
+            container.add([cardBg, suitText, numText]);
+            this.fieldCardContainers.push(container);
+        });
+    }
+
+    renderOpponentHands() {
+        [1, 2, 3].forEach(pIdx => {
+            if (this.opponentHandContainers[pIdx]) {
+                this.opponentHandContainers[pIdx].destroy();
+                this.opponentHandContainers[pIdx] = null;
+            }
+            if (!this.engine.players[pIdx]) return; // 2人戦では存在しないプレイヤーは描かない
+
+            const cont = this.add.container(0, 0);
+            const handLen = this.engine.players[pIdx].hand.length;
+            if (handLen === 0) return;
+
+            const isHoriz = (pIdx === 2);
+            const basePos = pIdx === 1 ? { x: 100, y: 120 } : (pIdx === 2 ? { x: 320, y: 15 } : { x: 540, y: 120 });
+            
+            for (let i = 0; i < handLen; i++) {
+                const offset = (i - (handLen - 1) / 2) * 12;
+                const cx = isHoriz ? basePos.x + offset : basePos.x;
+                const cy = isHoriz ? basePos.y : basePos.y + offset;
+
+                const cardBg = this.add.rectangle(cx, cy, 26, 36, 0xb71c1c).setStrokeStyle(1, 0xffffff);
+                const innerPattern = this.add.rectangle(cx, cy, 20, 30, 0x880e4f);
+                cont.add([cardBg, innerPattern]);
+            }
+            this.opponentHandContainers[pIdx] = cont;
+        });
+    }
+
+    createResultPopup() {
+        this.resultPopup = this.add.container(320, 250).setVisible(false).setDepth(200);
+        const popupBg = this.add.rectangle(0, 0, 420, 320, 0x000000, 0.95).setStrokeStyle(4, 0xffd700);
+        const titleText = this.add.text(0, -120, '🏆 最終結果リザルト 🏆', { fontSize: '22px', color: '#ffd700', fontStyle: 'bold' }).setOrigin(0.5);
+
+        this.resultText = this.add.text(0, -30, '', { fontSize: '15px', color: '#ffffff', align: 'center', lineSpacing: 10 }).setOrigin(0.5);
+
+        const restartBtn = this.createButton(0, 110, '🔄 もう一度遊ぶ', 0x4caf50, () => { location.reload(); }, 160, 40);
+
+        this.resultPopup.add([popupBg, titleText, this.resultText, restartBtn]);
+    }
+
+    showResultPopup() {
+        this.setButtonEnabled(this.playBtn, false);
+        this.setButtonEnabled(this.passBtn, false);
+        this.setButtonEnabled(this.dobonBtn, false);
+
+        const sorted = [...this.engine.players].sort((a, b) => a.rank - b.rank);
+        const lines = sorted.map(p => {
+            const status = p.isEliminated ? ' (ドボン脱落)' : ' (生存)';
+            return `${p.rank}位 : ${p.name}  [${p.score} pt]${status}`;
+        });
+
+        this.resultText.setText(lines.join('\n'));
+        this.resultPopup.setVisible(true);
+    }
+
+    createButton(x, y, text, color, onClick, width = 120, height = 36) {
+        const btnContainer = this.add.container(x, y);
+        const bg = this.add.rectangle(0, 0, width, height, color, 1).setInteractive({ useHandCursor: true });
+        const txt = this.add.text(0, 0, text, { fontSize: '13px', color: '#ffffff', fontStyle: 'bold' }).setOrigin(0.5);
+
+        btnContainer.add([bg, txt]);
+        bg.on('pointerdown', () => { if (btnContainer.enabled) onClick(); });
+
+        btnContainer.color = color;
+        btnContainer.bg = bg;
+        btnContainer.txt = txt;
+        btnContainer.enabled = true;
+        return btnContainer;
+    }
+
+    setButtonEnabled(btnContainer, enabled) {
+        btnContainer.enabled = enabled;
+        btnContainer.bg.setFillStyle(enabled ? btnContainer.color : 0x555555, enabled ? 1 : 0.6);
+        btnContainer.txt.setAlpha(enabled ? 1.0 : 0.5);
+    }
+
+    // 選択への追加可否（外部レビュー修正1、2026-11-16）：最終判定（canPlayCards）は緩めず、
+    // 「選択中＋このカード」が手札の残りで出せる組み合わせに完成しうるかで決める。
+    // 場がペア／階段でも1枚目から選んで組み立てられるようにするため。完成しえないカードは選べないまま
+    canAddToSelection(card) {
+        const myHand = this.engine.players[this.myPlayerId].hand;
+        const selected = this.selectedIndices.map(i => myHand[i]);
+        if (selected.includes(card)) return true;
+        const base = [...selected, card];
+        if (this.engine.canPlayCards(base).valid) return true;
+
+        const rest = myHand.filter(c => !base.includes(c));
+        const reals = base.filter(c => !c.isJoker);
+
+        // 同じ数字の組み合わせへの完成：残りの同数字・JKを足した各枚数を試す
+        const trySame = (numOrNull) => {
+            const extras = rest.filter(c => c.isJoker || (numOrNull !== null && c.num === numOrNull));
+            const variants = [extras, [...extras.filter(c => !c.isJoker), ...extras.filter(c => c.isJoker)]];
+            for (const ex of variants) {
+                for (let k = 1; k <= ex.length; k++) {
+                    if (this.engine.canPlayCards([...base, ...ex.slice(0, k)]).valid) return true;
+                }
+            }
+            return false;
+        };
+        if (reals.length === 0) {
+            // JKだけの選択：JKのみの組でも、実カードを足した同数字の組でも完成しうる
+            if (trySame(null)) return true;
+            const nums = [...new Set(rest.filter(c => !c.isJoker).map(c => c.num))];
+            for (const n of nums) { if (trySame(n)) return true; }
+        } else if (reals.every(c => c.num === reals[0].num)) {
+            if (trySame(reals[0].num)) return true;
+        }
+
+        // 階段への完成：実カードが同じスートで数字が重ならなければ、不足分を残りの手札・JKで埋めた候補を試す
+        const toIdx = (num) => num === 1 ? 11 : (num === 2 ? 12 : num - 3);
+        const fromIdx = (idx) => idx === 11 ? 1 : (idx === 12 ? 2 : idx + 3);
+        const basePositions = reals.map(c => toIdx(c.num));
+        if (new Set(basePositions).size === basePositions.length
+            && (reals.length === 0 || new Set(reals.map(c => c.suit)).size === 1)) {
+            const suitOptions = reals.length === 0 ? ['♠', '♥', '♦', '♣'] : [reals[0].suit];
+            for (const suit of suitOptions) {
+                for (let len = Math.max(3, base.length); len <= 13; len++) {
+                    for (let start = 0; start + len - 1 <= 12; start++) {
+                        const end = start + len - 1;
+                        if (!basePositions.every(p => p >= start && p <= end)) continue;
+                        const uncovered = [];
+                        for (let i = start; i <= end; i++) if (!basePositions.includes(i)) uncovered.push(fromIdx(i));
+                        // base 内のJKが埋める分を差し引いた、残りから必要な枚数
+                        const needFromRest = uncovered.length - (base.length - reals.length);
+                        if (needFromRest <= 0) continue;
+                        const pool = [...rest];
+                        const fillers = [];
+                        let ok = true;
+                        for (const numNeeded of uncovered) {
+                            if (fillers.length >= needFromRest) break;
+                            let ix = pool.findIndex(c => !c.isJoker && c.suit === suit && c.num === numNeeded);
+                            if (ix < 0) ix = pool.findIndex(c => c.isJoker);
+                            if (ix < 0) { ok = false; break; }
+                            fillers.push(pool.splice(ix, 1)[0]);
+                        }
+                        if (ok && fillers.length === needFromRest && this.engine.canPlayCards([...base, ...fillers]).valid) return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    renderHandCards() {
+        this.handContainers.forEach(c => c.destroy());
+        this.handContainers = [];
+
+        const myHand = this.engine.players[this.myPlayerId].hand;
+        const totalCards = myHand.length;
+        if (totalCards === 0) return;
+
+        const maxAreaWidth = 550;
+        const cardWidth = 62;
+        const spacing = Math.min(68, maxAreaWidth / totalCards);
+        const startX = 320 - ((totalCards - 1) * spacing) / 2;
+        const y = 520;
+
+        const isMyTurn = (this.engine.currentTurnIndex === this.myPlayerId);
+
+        myHand.forEach((card, index) => {
+            const x = startX + (index * spacing);
+            const isSelected = this.selectedIndices.includes(index);
+
+            let isPlayable = true;
+            if (isMyTurn && this.engine.gameState === 'PLAYING') {
+                // 選択可否は「完成しうるか」で判定する（修正1）。選択済みのカードは解除できるよう常に可
+                isPlayable = isSelected || this.canAddToSelection(card);
+            }
+
+            const container = this.add.container(x, isSelected ? y - 20 : y);
+            const cardBgColor = isPlayable ? 0xffffff : 0xdddddd;
+            
+            const bg = this.add.rectangle(0, 0, cardWidth, 90, cardBgColor)
+                .setStrokeStyle(isSelected ? 3 : 1, isSelected ? 0xffeb3b : 0x333333)
+                .setInteractive({ useHandCursor: isPlayable });
+
+            if (!isPlayable) container.setAlpha(0.65);
+
+            let textColor = (card.suit === '♥' || card.suit === '♦') ? '#d32f2f' : '#111111';
+            
+            let suitTop = this.add.text(-22, -38, card.isJoker ? 'JK' : card.suit, { fontSize: '13px', color: textColor, fontStyle: 'bold' });
+            let numCenter = this.add.text(0, -2, card.isJoker ? 'JOKER' : this.getLabel(card.num), { fontSize: '18px', color: textColor, fontStyle: 'bold' }).setOrigin(0.5);
+            let ptBottom = this.add.text(0, 28, `(${card.num}pt)`, { fontSize: '10px', color: '#666666' }).setOrigin(0.5);
+
+            container.add([bg, suitTop, numCenter, ptBottom]);
+            this.handContainers.push(container);
+
+            bg.on('pointerdown', () => {
+                if (this.pendingTypeChoice) this.cancelTypeChoice();
+                if (!isPlayable && !isSelected) return;
+
+                if (isSelected) {
+                    this.selectedIndices = this.selectedIndices.filter(i => i !== index);
+                } else {
+                    this.selectedIndices.push(index);
+                }
+                this.updateDisplay();
+            });
+        });
+    }
+
+    getLabel(num) {
+        if (num === 1) return 'A';
+        if (num === 11) return 'J';
+        if (num === 12) return 'Q';
+        if (num === 13) return 'K';
+        return num.toString();
+    }
+}
+
+const config = {
+    type: Phaser.AUTO,
+    parent: 'game-container',
+    backgroundColor: '#0d230a',
+    dom: { createContainer: true },
+    // スマホ対応（2026-11-17）: Scale Manager で 900×650 のステージを画面に収まるよう
+    // 自動縮小する。ゲーム内座標（900×650）は従来どおり不変。
+    scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: 900,
+        height: 650
+    },
+    scene: [MainScene]
+};
+
+const game = new Phaser.Game(config);
+</script>
+
+</body>
+</html>
