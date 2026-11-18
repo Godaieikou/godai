@@ -1226,6 +1226,13 @@ class CpuPlayer {
     }
 }
 
+// あがり時の「見せ時間」（本人の裁定2026-11-18）：あがりが確定しても、場に出たカードを
+// この時間だけ見せてから、結果表示と場のクリアへ進む。理由は (1) 上がり前ドボンの機会の担保
+// （ドボン判定が先＝W-02。エンジンは pendingWin で上がりを保留済み）、(2) 1パック54枚ゆえ
+// カードカウンティングが正当な戦略であり、最後のカードが一瞬も見えない現状を直すため。
+// 遅らせるのは表示だけで、エンジンの論理・状態・同期データは変えない。
+const WIN_REVEAL_MS = 2000;
+
 class MainScene extends Phaser.Scene {
     constructor() {
         super({ key: 'MainScene' });
@@ -1240,6 +1247,12 @@ class MainScene extends Phaser.Scene {
         this.pendingTypeChoice = null; // 型選択待ちの選択インデックス（G-06）
         this.handContainers = [];
         this.fieldCardContainers = [];
+        this.winRevealCards = null; // あがり見せ時間中に保持する場カード（表示専用）
+        this._winRevealHandledResult = null; // 見せ時間を適用済みの lastDobonResult（再入防止）
+        this._pendingWinFieldCards = null; // あがり保留中の場カードの控え（非同期解決時の表示用）
+        this._pendingWinPlayerIndex = null; // あがり保留中の出した人の控え（同期フィールドの勝者表示用）
+        this._winResultPopupDeferred = false; // 見せ時間中に結果表示が来たら、終了時に出す
+        this._winRevealSyncPending = null; // 次の SYNC_STATE に1回だけ同梱する表示専用のあがり情報（ホスト→ゲスト）
 
         this.peer = null;
         this.conn = null;
@@ -1488,6 +1501,12 @@ class MainScene extends Phaser.Scene {
             eliminatedRankCount: this.engine.eliminatedRankCount,
             dobonPhase: this.projectDobonPhaseForGuest(guestIdx)
         };
+        // 表示専用のあがり情報：あがりが確定した解決を運ぶ同期にだけ、1回だけ同梱する。
+        // ゲーム状態は変えない追加フィールドで、古いビルドのゲストは未知の項目として無視する
+        if (this._winRevealSyncPending) {
+            stateData.winReveal = this._winRevealSyncPending;
+            this._winRevealSyncPending = null;
+        }
         this.conn.send(stateData);
     }
 
@@ -1507,6 +1526,11 @@ class MainScene extends Phaser.Scene {
             // 欠落した同期（players が配列でない）は適用しない。中途半端に復元すると
             // 場や手札が壊れたまま対戦が続くため、丸ごと無視して次の正常な同期を待つ（先回り監査第2弾 A2-N04）
             if (!Array.isArray(data.players)) return;
+            // あがりの見せ時間（ゲスト側）：適用前の状態（あがり保留フェーズ・場・スコア）を控える。
+            // 同期データ自体は変えず、適用後の差分から「あがりが確定した」を表示側だけで検出する
+            const prevDobonPhase = this.engine.dobonPhase;
+            const prevFieldCards = this.engine.fieldCards;
+            const prevScores = this.engine.players.map(p => p.score);
             // N-06：相手の手札・山札・捨て札は中身が届かないため、枚数ぶんのダミーで復元する
             const dummyCard = (id) => ({ suit: 'JK', num: 0, isJoker: true, id });
             this.engine.deck = Array.from({ length: data.deckCount || 0 }, (_, i) => dummyCard(`dummy-deck-${i}`));
@@ -1549,6 +1573,28 @@ class MainScene extends Phaser.Scene {
                 ? { ...data.dobonPhase, declaredPlayers: new Set(data.dobonPhase.declaredPlayers || []) }
                 : null;
 
+            // あがり保留フェーズが閉じ、勝者が脱落しておらずスコアが増えていれば、あがりが確定した
+            // （ドボンで取り消された場合は勝者が脱落しているので始めない）。見せるのは保留中に
+            // 表示されていた場カード。フェーズ自体が同期されなかった同期解決では、場カードが
+            // ゲストに届いていないため対象外（同期データを変えない範囲では表示できない）
+            if (!this.winRevealCards && prevDobonPhase && prevDobonPhase.pendingWin && !this.engine.dobonPhase) {
+                const winnerIdx = (prevDobonPhase.chain && prevDobonPhase.chain.length > 0) ? prevDobonPhase.chain[0] : -1;
+                const winner = this.engine.players[winnerIdx];
+                if (winner && !winner.isEliminated && prevScores[winnerIdx] !== undefined && winner.score > prevScores[winnerIdx]) {
+                    this.startWinReveal(prevFieldCards);
+                }
+            }
+
+            // 表示専用フィールド winReveal が同梱されていれば、それであがりの見せ時間を始める。
+            // 同期解決（フェーズ自体が同期されなかった）場合の補完で、上の差分検出で既に
+            // 始まっていれば二重には始めない。フィールドが無い同期（古いホスト等）では従来どおり
+            if (!this.winRevealCards && data.winReveal && Array.isArray(data.winReveal.cards) && data.winReveal.cards.length > 0) {
+                const w = (typeof data.winReveal.winnerIndex === 'number') ? this.engine.players[data.winReveal.winnerIndex] : null;
+                if (!w || !w.isEliminated) {
+                    this.startWinReveal(data.winReveal.cards);
+                }
+            }
+
             this.rawLogHistory = Array.isArray(data.logs) ? data.logs : [];
             if (this.logElement) {
                 this.logElement.innerHTML = this.rawLogHistory.join('<br/>') + '<br/>';
@@ -1576,6 +1622,7 @@ class MainScene extends Phaser.Scene {
             }
         } else if (data.type === 'ACTION_PLAY') {
             if (this.isHost) {
+                if (this.winRevealCards) return; // あがりの見せ時間中は相手の操作も受けない（両側で揃える）
                 // N-02/N-03：カードIDで受け取り、送信者・手番・フェーズ・出せる組み合わせをホストが検証する。
                 // 検証に失敗した操作は丸ごと無視する（部分的に適用しない）
                 if (this.engine.gameState !== 'PLAYING' || this.engine.dobonPhase) return;
@@ -1600,6 +1647,7 @@ class MainScene extends Phaser.Scene {
             }
         } else if (data.type === 'ACTION_PASS') {
             if (this.isHost) {
+                if (this.winRevealCards) return; // あがりの見せ時間中は相手の操作も受けない（両側で揃える）
                 // N-03：本人の手番・フェーズ中でないことを検証する
                 if (this.engine.gameState !== 'PLAYING' || this.engine.dobonPhase) return;
                 const p = this.engine.players[data.playerIdx];
@@ -1828,6 +1876,8 @@ class MainScene extends Phaser.Scene {
     }
 
     onPlayerPlay() {
+        if (this.winRevealCards) return; // あがりの見せ時間中は入力を受けない
+
         if (this.engine.gameState === 'START_CHOICE') {
             if (this.selectedIndices.length !== 1) {
                 this.turnText.setText('親決定用のカードを1枚だけ選択してください').setColor('#ff9800');
@@ -2012,6 +2062,14 @@ class MainScene extends Phaser.Scene {
         if (res.is5Skip) this.showEffectCutin('⏭️ 5スキップ！', 0x00bcd4);
         if (res.is9Reverse) this.showEffectCutin('↩️ 9リバース！', 0x8bc34a);
 
+        // あがり保留中（ドボン判定待ち）は場カードを控え、あがりが同期解決した場合は
+        // 最初の描画から見せ時間に入る（表示のみ。エンジンの状態は変えない）
+        if (this.engine.dobonPhase && this.engine.dobonPhase.pendingWin && this.engine.fieldCards.length > 0) {
+            this._pendingWinFieldCards = [...this.engine.fieldCards];
+            this._pendingWinPlayerIndex = this.engine.dobonPhase.playPlayerIndex;
+        }
+        this.checkWinReveal(res.playedCards, playerIdx);
+
         this.updateDisplay();
 
         if (res.isGameOver) {
@@ -2034,9 +2092,65 @@ class MainScene extends Phaser.Scene {
         this.checkTurnState();
     }
 
+    // あがりの「見せ時間」を始める（表示専用）：場に出たカードを WIN_REVEAL_MS の間だけ
+    // 描き続け、その間は入力と手番の進行を止める。エンジンの状態・同期データには触れない
+    startWinReveal(cards) {
+        if (!cards || cards.length === 0) return;
+        if (this.winRevealCards) return; // 既に見せ時間中なら二重に始めない
+        this.winRevealCards = [...cards];
+        this.setButtonEnabled(this.playBtn, false);
+        this.setButtonEnabled(this.passBtn, false);
+        this.setButtonEnabled(this.dobonBtn, false);
+        this.updateDisplay();
+        this.time.delayedCall(WIN_REVEAL_MS, () => this.endWinReveal());
+    }
+
+    // 見せ時間の終了：場の表示をエンジンの状態に戻し、保留していた結果表示か手番の続きへ進む
+    endWinReveal() {
+        if (!this.winRevealCards) return;
+        this.winRevealCards = null;
+        this.updateDisplay();
+        if (this._winResultPopupDeferred) {
+            this._winResultPopupDeferred = false;
+            this.showResultPopup();
+            return;
+        }
+        this.checkTurnState();
+    }
+
+    // あがりが確定した直後なら見せ時間を始める。確定の判定はエンジンの lastDobonResult
+    // （winProcessed）だけを見る。ドボンで上がりが取り消された場合（winProcessed でない）は始めない。
+    // fallbackCards は同期解決時に呼び出し側が持っている「出したカード」。非同期解決時は
+    // あがり保留中に控えた場カードを使う。winnerIndex は同期解決時の出した人（非同期解決時は
+    // 保留中に控えた playPlayerIndex を使う）
+    checkWinReveal(fallbackCards, winnerIndex = null) {
+        const lr = this.engine.lastDobonResult;
+        if (!lr || !lr.winProcessed || lr === this._winRevealHandledResult) return;
+        this._winRevealHandledResult = lr;
+        const cards = (fallbackCards && fallbackCards.length > 0) ? fallbackCards
+            : (this._pendingWinFieldCards && this._pendingWinFieldCards.length > 0) ? this._pendingWinFieldCards
+            : this.engine.fieldCards;
+        // ホストは、この解決を運ぶ次の同期に表示専用のあがり情報を同梱する（同期解決では
+        // フェーズも場カードもゲストに届かないため、ゲスト側の見せ時間の材料にする）
+        if (this.isHost) {
+            const wIdx = (typeof winnerIndex === 'number') ? winnerIndex
+                : (typeof this._pendingWinPlayerIndex === 'number') ? this._pendingWinPlayerIndex : -1;
+            this._winRevealSyncPending = { winnerIndex: wIdx, cards: [...cards] };
+        }
+        this.startWinReveal(cards);
+    }
+
     // 💥 ドボン判定フェーズの進行役：エンジンの質問状態を読み、CPUにはポリシー回答（できれば必ず宣言・返し）、
     // 自分には専用の選択ボタンを出し、相手の回答はネットワーク経由で受け取る。フェーズ中はタイマーに依存しない
     handleDobonPhase() {
+        // あがり保留中は場カードを控え（解決後の見せ時間で出すため）、フェーズが解決して
+        // あがりが確定していたら、描画より先に見せ時間を始める
+        if (this.engine.dobonPhase && this.engine.dobonPhase.pendingWin && this.engine.fieldCards.length > 0) {
+            this._pendingWinFieldCards = [...this.engine.fieldCards];
+            this._pendingWinPlayerIndex = this.engine.dobonPhase.playPlayerIndex;
+        }
+        this.checkWinReveal();
+
         this.updateDisplay();
         this.syncGameState();
 
@@ -2194,6 +2308,8 @@ class MainScene extends Phaser.Scene {
     }
 
     onPlayerPassOrCancel() {
+        if (this.winRevealCards) return; // あがりの見せ時間中は入力を受けない
+
         if (this.selectedIndices.length > 0) {
             this.selectedIndices = [];
             this.updateDisplay();
@@ -2228,6 +2344,14 @@ class MainScene extends Phaser.Scene {
     }
 
     checkTurnState() {
+        // あがりの見せ時間中は、入力もCPUの手番進行も止める（終了時に endWinReveal から再開する）
+        if (this.winRevealCards) {
+            this.setButtonEnabled(this.playBtn, false);
+            this.setButtonEnabled(this.passBtn, false);
+            this.setButtonEnabled(this.dobonBtn, false);
+            return;
+        }
+
         if (this.engine.gameState === 'GAME_OVER') {
             this.showResultPopup();
             return;
@@ -2366,7 +2490,8 @@ class MainScene extends Phaser.Scene {
         this.fieldCardContainers.forEach(c => c.destroy());
         this.fieldCardContainers = [];
 
-        const cards = this.engine.fieldCards;
+        // あがりの見せ時間中は、エンジン側で場が流れていても、確定した上がり札を描き続ける
+        const cards = (this.winRevealCards && this.winRevealCards.length > 0) ? this.winRevealCards : this.engine.fieldCards;
         if (cards.length === 0) return;
 
         const total = cards.length;
@@ -2430,6 +2555,12 @@ class MainScene extends Phaser.Scene {
     }
 
     showResultPopup() {
+        // あがりの見せ時間中は結果表示を保留し、見せ時間の終了時に出す
+        if (this.winRevealCards) {
+            this._winResultPopupDeferred = true;
+            return;
+        }
+
         this.setButtonEnabled(this.playBtn, false);
         this.setButtonEnabled(this.passBtn, false);
         this.setButtonEnabled(this.dobonBtn, false);
