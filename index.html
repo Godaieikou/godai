@@ -917,10 +917,21 @@ result.fieldFlowed = true;
 
         const elevenCount = selectedCards.filter(c => effNum(c) === 11).length;
         if (RULE_FLAGS.ELEVEN_BACK && elevenCount > 0) {
-            // Jバック選択（本人の裁定2026-11-18）：J（JKのJ固定を含む）が偶数枚（2枚以上）のときだけ、
-            // 出した人が「する／しない」を選べる。'skip' のときだけ発動しない。
-            // 選択なし（CPU・従来呼び出し）と奇数枚は従来どおり発動する
-            if (elevenCount % 2 === 0 && jBackChoice === 'skip') {
+            // Jバック選択（本人の裁定2026-11-18、選び方を「上／下」に変更も同日）：J（JKのJ固定を含む）が
+            // 偶数枚（2枚以上）のときだけ、出した人が最終的な強さ順を選べる。
+            // 'up'＝大きい数字が強い（通常順）、'down'＝小さい数字が強い（逆転順）。
+            // この時点ではこの出しの革命トグルは反映済みなので、選ばれた向きになるよう11バック側を合わせる。
+            // 選択なし（CPU・CPU代走・従来呼び出し）と奇数枚は従来どおりトグル発動する。
+            // 旧クライアント互換：'apply' はトグル、'skip' は見送りとして扱う
+            if (elevenCount % 2 === 0 && (jBackChoice === 'up' || jBackChoice === 'down')) {
+                const wantReversed = (jBackChoice === 'down');
+                const needBack = (wantReversed !== this.isRevolution);
+                if (needBack !== this.is11Back) {
+                    this.is11Back = needBack;
+                    resObj.is11BackTriggered = true;
+                }
+                this.log(`🔄 強さ順を「${jBackChoice === 'up' ? '上（大きい数字が強い）' : '下（小さい数字が強い）'}」にしました`);
+            } else if (elevenCount % 2 === 0 && jBackChoice === 'skip') {
                 this.log(`🔄 11バックを見送りました`);
             } else {
                 this.is11Back = !this.is11Back;
@@ -1582,7 +1593,7 @@ class MainScene extends Phaser.Scene {
                 }
                 const cards = indices.map(i => p.hand[i]);
                 const declaredType = (data.declaredType === 'same' || data.declaredType === 'sequence') ? data.declaredType : null;
-                const jBackChoice = (data.jBackChoice === 'apply' || data.jBackChoice === 'skip') ? data.jBackChoice : null;
+                const jBackChoice = (data.jBackChoice === 'up' || data.jBackChoice === 'down' || data.jBackChoice === 'apply' || data.jBackChoice === 'skip') ? data.jBackChoice : null;
                 if (!this.engine.canPlayCards(cards, declaredType).valid) return;
                 this.executePlay(data.playerIdx, indices, declaredType, jBackChoice);
                 this.syncGameState();
@@ -1688,9 +1699,10 @@ class MainScene extends Phaser.Scene {
         this.typeSeqBtn.setVisible(false);
         this.setButtonEnabled(this.typeSameBtn, false);
         this.setButtonEnabled(this.typeSeqBtn, false);
-        // Jバック選択ボタン（本人の裁定2026-11-18）：Jが偶数枚のときだけ、通常ボタンの代わりに表示する
-        this.jBackApplyBtn = this.createButton(230, 600, '🔄 バックする', 0x2196f3, () => this.chooseJBack('apply'), 150, 40);
-        this.jBackSkipBtn = this.createButton(410, 600, 'バックしない', 0x607d8b, () => this.chooseJBack('skip'), 150, 40);
+        // Jバック選択ボタン（本人の裁定2026-11-18）：Jが偶数枚のときだけ、通常ボタンの代わりに表示する。
+        // 選び方は最終的な強さ順そのもの：「上」＝大きい数字が強い、「下」＝小さい数字が強い
+        this.jBackApplyBtn = this.createButton(210, 600, '⬆️ 上：大きい数字が強い', 0x2196f3, () => this.chooseJBack('up'), 180, 40);
+        this.jBackSkipBtn = this.createButton(420, 600, '⬇️ 下：小さい数字が強い', 0x607d8b, () => this.chooseJBack('down'), 180, 40);
         this.jBackApplyBtn.setVisible(false);
         this.jBackSkipBtn.setVisible(false);
         this.setButtonEnabled(this.jBackApplyBtn, false);
@@ -1859,7 +1871,7 @@ class MainScene extends Phaser.Scene {
             return;
         }
 
-        // Jが偶数枚なら、バックするか選ばせる（本人の裁定2026-11-18）
+        // Jが偶数枚なら、最終的な強さ順（上／下）を選ばせる（本人の裁定2026-11-18）
         if (this.needsJBackChoice(selectedCards)) {
             this.showJBackChoice(null);
             return;
@@ -1919,7 +1931,7 @@ class MainScene extends Phaser.Scene {
             return;
         }
 
-        // 型を決めた結果Jが偶数枚になる場合は、続けてバックするか選ばせる（本人の裁定2026-11-18）
+        // 型を決めた結果Jが偶数枚になる場合は、続けて最終的な強さ順（上／下）を選ばせる（本人の裁定2026-11-18）
         if (this.needsJBackChoice(selectedCards, declaredType)) {
             this.showJBackChoice(declaredType);
             return;
@@ -1950,7 +1962,7 @@ class MainScene extends Phaser.Scene {
 
     showJBackChoice(declaredType) {
         this.pendingJBackChoice = { indices: [...this.selectedIndices], declaredType };
-        this.turnText.setText('Jバックしますか？').setColor('#ffeb3b');
+        this.turnText.setText('強さ順をどちらにしますか？').setColor('#ffeb3b');
         [this.playBtn, this.passBtn, this.dobonBtn].forEach(b => { b.setVisible(false); this.setButtonEnabled(b, false); });
         [this.jBackApplyBtn, this.jBackSkipBtn].forEach(b => { b.setVisible(true); this.setButtonEnabled(b, true); });
     }
