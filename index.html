@@ -1266,6 +1266,16 @@ class MainScene extends Phaser.Scene {
         this.updateDisplay();
     }
 
+    // 対局の初期化に合わせて、カード選択の状態をリセットする。
+    // 接続前のローカル戦などで選んだカードのインデックスが残ると、初期化後の新しい手札に
+    // 対して選択数がずれ、親決めで1枚クリックしても「1枚だけ選択してください」と表示され
+    // 続けて選択が登録できなくなる（2026-11-18 実機報告。再現：tests/net-doubleconn.test.cjs NB-04/NB-05）
+    resetSelectionState() {
+        this.selectedIndices = [];
+        this.pendingTypeChoice = null;
+        this.pendingJBackChoice = null;
+    }
+
     setupModalEvents() {
         const modal = document.getElementById('rule-modal');
         document.getElementById('btn-close-rule').addEventListener('click', () => {
@@ -1326,6 +1336,7 @@ class MainScene extends Phaser.Scene {
             // オンライン対戦は2人戦（③-2）。接続時は人数が同じでも無条件に2人で初期化し直す
             // （人数条件つきだと、2人CPU戦の状態＝P2の「CPU (P2)」名や進行がそのまま対戦に残ってしまう）
             this.engine.initGame(2);
+            this.resetSelectionState();
             this.engine.players[1].isCpu = false;
             this.engine.log(`🤝 ゲストプレイヤーが接続しました！`);
             this.updateDisplay();
@@ -1376,6 +1387,7 @@ class MainScene extends Phaser.Scene {
             this.myPlayerId = 1;
             // ゲスト側も接続時は無条件に2人戦で初期化し直す（実際の状態はホストの同期で上書きされる）
             this.engine.initGame(2);
+            this.resetSelectionState();
             this.engine.log(`🔗 ホスト [${targetId}] に接続要求を送信...`);
             this.setupConnectionHandlers();
         });
@@ -1394,6 +1406,7 @@ class MainScene extends Phaser.Scene {
             const countEl = document.getElementById('sel-player-count');
             const count = countEl ? (parseInt(countEl.value, 10) || 2) : 2;
             this.engine.initGame(count);
+            this.resetSelectionState();
             this.engine.players[1].name = 'CPU (P2)';
             this.engine.log(`🤖 1人テストモード（${this.engine.players.length}人）で開始します`);
             this.updateDisplay();
@@ -1758,8 +1771,11 @@ class MainScene extends Phaser.Scene {
 
         this.createButton(50, 460, '📊 強さ順', 0x8e24aa, () => this.sortHand('strength'), 80, 28);
         this.createButton(135, 460, '♠ スート順', 0x3949ab, () => this.sortHand('suit'), 80, 28);
-        this.autoBtn = this.createButton(70, 25, '🤖 AI: OFF', 0x009688, () => this.toggleAutoMode(), 100, 28);
-        this.fastBtn = this.createButton(180, 25, '⚡ 高速: OFF', 0xe91e63, () => this.toggleFastMode(), 100, 28);
+        // AI／高速ボタンは右上に置く。左上は P2P パネル（DOM、左上固定・最大幅約380px）と重なり、
+        // 画面寸法によってはパネルの開閉トグルと⚡高速ボタンが重なって誤操作になるため
+        // （2026-11-18 実機報告。再現：tests/net-toggle-overlap.test.cjs TO-01）
+        this.autoBtn = this.createButton(675, 25, '🤖 AI: OFF', 0x009688, () => this.toggleAutoMode(), 100, 28);
+        this.fastBtn = this.createButton(785, 25, '⚡ 高速: OFF', 0xe91e63, () => this.toggleFastMode(), 100, 28);
 
         this.opponentHandContainers = [null, null, null, null];
         this.ringRotationAngle = 0;
