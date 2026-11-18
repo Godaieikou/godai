@@ -824,7 +824,7 @@ result.fieldFlowed = true;
         return { valid: true };
     }
 
-    playCards(playerIndex, cardIndices, targetBombNum = null, declaredType = null) {
+    playCards(playerIndex, cardIndices, targetBombNum = null, declaredType = null, jBackChoice = null) {
         if (this.gameState === 'GAME_OVER') return { isGameOver: true };
         this.lastDobonResult = null;
 
@@ -915,10 +915,18 @@ result.fieldFlowed = true;
             resObj.isRevolutionTriggered = true;
         }
 
-        if (RULE_FLAGS.ELEVEN_BACK && selectedCards.some(c => effNum(c) === 11)) {
-            this.is11Back = !this.is11Back;
-            this.log(`🔄 11バック発動！一時的に強さが逆転します`);
-            resObj.is11BackTriggered = true;
+        const elevenCount = selectedCards.filter(c => effNum(c) === 11).length;
+        if (RULE_FLAGS.ELEVEN_BACK && elevenCount > 0) {
+            // Jバック選択（本人の裁定2026-11-18）：J（JKのJ固定を含む）が偶数枚（2枚以上）のときだけ、
+            // 出した人が「する／しない」を選べる。'skip' のときだけ発動しない。
+            // 選択なし（CPU・従来呼び出し）と奇数枚は従来どおり発動する
+            if (elevenCount % 2 === 0 && jBackChoice === 'skip') {
+                this.log(`🔄 11バックを見送りました`);
+            } else {
+                this.is11Back = !this.is11Back;
+                this.log(`🔄 11バック発動！一時的に強さが逆転します`);
+                resObj.is11BackTriggered = true;
+            }
         }
 
         if (RULE_FLAGS.EIGHT_GIRI && selectedCards.some(c => effNum(c) === 8)) {
@@ -1574,8 +1582,9 @@ class MainScene extends Phaser.Scene {
                 }
                 const cards = indices.map(i => p.hand[i]);
                 const declaredType = (data.declaredType === 'same' || data.declaredType === 'sequence') ? data.declaredType : null;
+                const jBackChoice = (data.jBackChoice === 'apply' || data.jBackChoice === 'skip') ? data.jBackChoice : null;
                 if (!this.engine.canPlayCards(cards, declaredType).valid) return;
-                this.executePlay(data.playerIdx, indices, declaredType);
+                this.executePlay(data.playerIdx, indices, declaredType, jBackChoice);
                 this.syncGameState();
             }
         } else if (data.type === 'ACTION_PASS') {
@@ -1679,6 +1688,13 @@ class MainScene extends Phaser.Scene {
         this.typeSeqBtn.setVisible(false);
         this.setButtonEnabled(this.typeSameBtn, false);
         this.setButtonEnabled(this.typeSeqBtn, false);
+        // Jバック選択ボタン（本人の裁定2026-11-18）：Jが偶数枚のときだけ、通常ボタンの代わりに表示する
+        this.jBackApplyBtn = this.createButton(230, 600, '🔄 バックする', 0x2196f3, () => this.chooseJBack('apply'), 150, 40);
+        this.jBackSkipBtn = this.createButton(410, 600, 'バックしない', 0x607d8b, () => this.chooseJBack('skip'), 150, 40);
+        this.jBackApplyBtn.setVisible(false);
+        this.jBackSkipBtn.setVisible(false);
+        this.setButtonEnabled(this.jBackApplyBtn, false);
+        this.setButtonEnabled(this.jBackSkipBtn, false);
 
         this.createButton(50, 460, '📊 強さ順', 0x8e24aa, () => this.sortHand('strength'), 80, 28);
         this.createButton(135, 460, '♠ スート順', 0x3949ab, () => this.sortHand('suit'), 80, 28);
@@ -1843,6 +1859,12 @@ class MainScene extends Phaser.Scene {
             return;
         }
 
+        // Jが偶数枚なら、バックするか選ばせる（本人の裁定2026-11-18）
+        if (this.needsJBackChoice(selectedCards)) {
+            this.showJBackChoice(null);
+            return;
+        }
+
         if (this.isHost) {
             this.executePlay(this.myPlayerId, this.selectedIndices);
             this.syncGameState();
@@ -1897,6 +1919,12 @@ class MainScene extends Phaser.Scene {
             return;
         }
 
+        // 型を決めた結果Jが偶数枚になる場合は、続けてバックするか選ばせる（本人の裁定2026-11-18）
+        if (this.needsJBackChoice(selectedCards, declaredType)) {
+            this.showJBackChoice(declaredType);
+            return;
+        }
+
         if (this.isHost) {
             this.executePlay(this.myPlayerId, indices, declaredType);
             this.syncGameState();
@@ -1907,10 +1935,61 @@ class MainScene extends Phaser.Scene {
         this.selectedIndices = [];
     }
 
-    executePlay(playerIdx, indices, declaredType = null) {
+    // Jバックの選択対象か（本人の裁定2026-11-18）：J（JKのJ固定を含む）が偶数枚（2枚以上）の複数出し。
+    // JKだけの組み合わせは G-07 で 2（逆転時3）に固定されるため、ここでも J として数えられない。
+    // あがり札のときは場が流れてバックが消えるので対象外（W-05）
+    needsJBackChoice(selectedCards, declaredType = null) {
+        if (!RULE_FLAGS.ELEVEN_BACK) return false;
+        const myHand = this.engine.players[this.myPlayerId].hand;
+        if (selectedCards.length >= myHand.length) return false;
+        const info = this.engine.analyzePlayInContext(selectedCards, declaredType);
+        if (!info) return false;
+        const count = [...info.assignedNums.values()].filter(n => n === 11).length;
+        return count >= 2 && count % 2 === 0;
+    }
+
+    showJBackChoice(declaredType) {
+        this.pendingJBackChoice = { indices: [...this.selectedIndices], declaredType };
+        this.turnText.setText('Jバックしますか？').setColor('#ffeb3b');
+        [this.playBtn, this.passBtn, this.dobonBtn].forEach(b => { b.setVisible(false); this.setButtonEnabled(b, false); });
+        [this.jBackApplyBtn, this.jBackSkipBtn].forEach(b => { b.setVisible(true); this.setButtonEnabled(b, true); });
+    }
+
+    hideJBackButtons() {
+        [this.jBackApplyBtn, this.jBackSkipBtn].forEach(b => { b.setVisible(false); this.setButtonEnabled(b, false); });
+        [this.playBtn, this.passBtn, this.dobonBtn].forEach(b => b.setVisible(true));
+    }
+
+    // カードの選択を変えたらJバック選択は取り消す
+    cancelJBackChoice() {
+        if (!this.pendingJBackChoice) return;
+        this.pendingJBackChoice = null;
+        this.hideJBackButtons();
+        this.checkTurnState();
+    }
+
+    chooseJBack(jBackChoice) {
+        if (!this.pendingJBackChoice) return;
+        const { indices, declaredType } = this.pendingJBackChoice;
+        this.pendingJBackChoice = null;
+        this.hideJBackButtons();
+
+        const myHand = this.engine.players[this.myPlayerId].hand;
+        const selectedCards = indices.map(idx => myHand[idx]);
+        if (this.isHost) {
+            this.executePlay(this.myPlayerId, indices, declaredType, jBackChoice);
+            this.syncGameState();
+        } else {
+            // N-02：カードID＋型宣言＋Jバック選択を送る
+            this.conn.send({ type: 'ACTION_PLAY', playerIdx: this.myPlayerId, cardIds: selectedCards.map(c => c.id), declaredType: declaredType, jBackChoice: jBackChoice });
+        }
+        this.selectedIndices = [];
+    }
+
+    executePlay(playerIdx, indices, declaredType = null, jBackChoice = null) {
         if (this.engine.gameState === 'GAME_OVER') return;
 
-        const res = this.engine.playCards(playerIdx, indices, null, declaredType);
+        const res = this.engine.playCards(playerIdx, indices, null, declaredType, jBackChoice);
         this.selectedIndices = [];
 
         if (res.isFourStop) this.showEffectCutin('🛡️ 4止め成功！(8切り阻止)', 0x4caf50);
@@ -2488,6 +2567,7 @@ class MainScene extends Phaser.Scene {
 
             bg.on('pointerdown', () => {
                 if (this.pendingTypeChoice) this.cancelTypeChoice();
+                if (this.pendingJBackChoice) this.cancelJBackChoice();
                 if (!isPlayable && !isSelected) return;
 
                 if (isSelected) {
