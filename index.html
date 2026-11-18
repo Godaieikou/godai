@@ -1322,7 +1322,20 @@ class MainScene extends Phaser.Scene {
     }
 
     setupPeerJS() {
-        this.peer = new Peer();
+        // NAT越え対策（2026-11-18）: 直接接続できない環境（キャリアNAT等）でもつながるよう、
+        // Open Relay Project の公開TURNを中継フォールバックとして追加する。
+        // 資格情報は公開のコミュニティ用（静的）。iceTransportPolicy は指定しない
+        // （既定の 'all' = 直接接続を優先し、できない場合のみ中継を使う）。
+        this.peer = new Peer({
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+                    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+                    { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+                ]
+            }
+        });
 
         this.peer.on('open', (id) => {
             document.getElementById('my-peer-id').innerText = id;
