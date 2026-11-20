@@ -1233,6 +1233,118 @@ class CpuPlayer {
 // 遅らせるのは表示だけで、エンジンの論理・状態・同期データは変えない。
 const WIN_REVEAL_MS = 2000;
 
+// TURN短命認証情報（2026-11-20）: Open Relay Project の Static Auth 方式で使う。
+//   username   = 有効期限のUNIX時刻（秒）
+//   credential = base64(HMAC-SHA1(secret, username))
+// を Peer 生成のたびに作る。secret は公式ページ（metered.ca/tools/openrelay）記載の公開値。
+// 本来は Web Crypto（crypto.subtle）で計算するが、subtle は非同期専用で、
+// setupPeerJS の同期初期化（create() から即 Peer を生成し、ボタンハンドラが this.peer を
+// 即参照する前提）と両立しない。そのため同一アルゴリズムの HMAC-SHA1 を純JSで同期実装する。
+// 計算結果は crypto.subtle と等価（tests/turnfix.test.cjs で Node crypto の既知ベクトルと照合）。
+const TURN_STATIC_AUTH_SECRET = '<MASKED_SECRET_001>';
+const TURN_TTL_SEC = 24 * 3600; // 認証情報の有効期限（生成時刻＋24時間）
+
+function utf8Bytes(str) {
+    const out = [];
+    for (let i = 0; i < str.length; i++) {
+        let cp = str.codePointAt(i);
+        if (cp > 0xffff) i++;
+        if (cp < 0x80) out.push(cp);
+        else if (cp < 0x800) out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+        else if (cp < 0x10000) out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+        else out.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    }
+    return out;
+}
+
+// SHA-1（純JS・同期）。入力・出力ともバイト配列（数値の配列）。
+function sha1Digest(inputBytes) {
+    const bytes = inputBytes.slice();
+    const ml = bytes.length;
+    bytes.push(0x80);
+    while (bytes.length % 64 !== 56) bytes.push(0);
+    const bitHi = Math.floor(ml / 0x20000000);
+    const bitLo = (ml % 0x20000000) * 8;
+    bytes.push((bitHi >>> 24) & 0xff, (bitHi >>> 16) & 0xff, (bitHi >>> 8) & 0xff, bitHi & 0xff);
+    bytes.push((bitLo >>> 24) & 0xff, (bitLo >>> 16) & 0xff, (bitLo >>> 8) & 0xff, bitLo & 0xff);
+
+    let h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
+    const w = new Array(80);
+    const rotl = (x, n) => ((x << n) | (x >>> (32 - n)));
+    for (let chunk = 0; chunk < bytes.length; chunk += 64) {
+        for (let i = 0; i < 16; i++) {
+            const j = chunk + i * 4;
+            w[i] = (bytes[j] << 24) | (bytes[j + 1] << 16) | (bytes[j + 2] << 8) | bytes[j + 3];
+        }
+        for (let i = 16; i < 80; i++) w[i] = rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        let a = h0, b = h1, c = h2, d = h3, e = h4;
+        for (let i = 0; i < 80; i++) {
+            let f, k;
+            if (i < 20) { f = (b & c) | (~b & d); k = 0x5A827999; }
+            else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDC; }
+            else { f = b ^ c ^ d; k = 0xCA62C1D6; }
+            const tmp = (rotl(a, 5) + f + e + k + w[i]) >>> 0;
+            e = d; d = c; c = rotl(b, 30); b = a; a = tmp;
+        }
+        h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0; h4 = (h4 + e) >>> 0;
+    }
+    const out = [];
+    for (const h of [h0, h1, h2, h3, h4]) out.push((h >>> 24) & 0xff, (h >>> 16) & 0xff, (h >>> 8) & 0xff, h & 0xff);
+    return out;
+}
+
+function base64Encode(bytes) {
+    const table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+        const b0 = bytes[i];
+        const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+        const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+        out += table[b0 >> 2];
+        out += table[((b0 & 0x03) << 4) | (b1 >> 4)];
+        out += i + 1 < bytes.length ? table[((b1 & 0x0f) << 2) | (b2 >> 6)] : '=';
+        out += i + 2 < bytes.length ? table[b2 & 0x3f] : '=';
+    }
+    return out;
+}
+
+// HMAC-SHA1(secret, message) を base64 で返す。crypto.subtle の HMAC-SHA1 と等価。
+function hmacSha1Base64(secret, message) {
+    let key = utf8Bytes(secret);
+    if (key.length > 64) key = sha1Digest(key);
+    while (key.length < 64) key.push(0);
+    const inner = sha1Digest(key.map((b) => b ^ 0x36).concat(utf8Bytes(message)));
+    const outer = sha1Digest(key.map((b) => b ^ 0x5c).concat(inner));
+    return base64Encode(outer);
+}
+
+// 短命の TURN 認証情報を生成する（nowSec はテスト用に現在時刻を差し替えるための引数）。
+function buildTurnCredential(nowSec) {
+    const base = (typeof nowSec === 'number' && isFinite(nowSec)) ? Math.floor(nowSec) : Math.floor(Date.now() / 1000);
+    const username = String(base + TURN_TTL_SEC);
+    return { username, credential: hmacSha1Base64(TURN_STATIC_AUTH_SECRET, username) };
+}
+
+// PeerJS 用の iceServers を組み立てる。TURN 認証情報の生成に失敗した場合は
+// STUN のみで続行し、失敗は turnError として呼び出し側へ返す（診断ログ用）。
+function buildIceServers() {
+    const servers = [{ urls: 'stun:stun.l.google.com:19302' }];
+    let turnError = null;
+    try {
+        const cred = buildTurnCredential();
+        if (!cred.username || !cred.credential) throw new Error('生成された認証情報が空です');
+        servers.push(
+            { urls: 'turn:staticauth.openrelay.metered.ca:80', username: cred.username, credential: cred.credential },
+            { urls: 'turn:staticauth.openrelay.metered.ca:443', username: cred.username, credential: cred.credential },
+            { urls: 'turns:staticauth.openrelay.metered.ca:443?transport=tcp', username: cred.username, credential: cred.credential }
+        );
+    } catch (err) {
+        turnError = err;
+    }
+    return { servers, turnError };
+}
+
 class MainScene extends Phaser.Scene {
     constructor() {
         super({ key: 'MainScene' });
@@ -1322,18 +1434,21 @@ class MainScene extends Phaser.Scene {
     }
 
     setupPeerJS() {
-        // NAT越え対策（2026-11-18）: 直接接続できない環境（キャリアNAT等）でもつながるよう、
-        // Open Relay Project の公開TURNを中継フォールバックとして追加する。
-        // 資格情報は公開のコミュニティ用（静的）。iceTransportPolicy は指定しない
-        // （既定の 'all' = 直接接続を優先し、できない場合のみ中継を使う）。
+        // NAT越え対策（2026-11-20 差し替え）: 直接接続できない環境（キャリアNAT等）でも
+        // つながるよう、Open Relay Project の TURN を中継フォールバックとして使う。
+        // 旧設定（turn:openrelay.metered.ca + 静的資格情報 'openrelayproject'、2026-11-18追加）は
+        // 公式の現行方式と一致せず無効の可能性が高い（接続不良の第一容疑）。
+        // 現行の Static Auth 方式（staticauth.openrelay.metered.ca）では短命の認証情報を
+        // Peer 生成のたびに作る（buildIceServers / buildTurnCredential を参照）。
+        // 生成に失敗した場合は STUN のみで続行し、診断ログに残す。
+        // iceTransportPolicy は指定しない（既定の 'all' = 直接接続を優先し、できない場合のみ中継を使う）。
+        const ice = buildIceServers();
+        if (ice.turnError) {
+            this.engine.log(`⚠️ TURN認証情報の生成に失敗したため、STUNのみで接続を試みます（${ice.turnError}）`);
+        }
         this.peer = new Peer({
             config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-                    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-                    { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-                ]
+                iceServers: ice.servers
             }
         });
 
